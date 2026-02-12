@@ -1,0 +1,10 @@
+O365
+imapclient
+pyzbar
+pillow
+pdfplumber
+requests
+beautifulsoup4
+lxml
+xmltodict
+logging
