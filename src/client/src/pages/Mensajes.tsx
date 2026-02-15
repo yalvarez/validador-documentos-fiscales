@@ -24,7 +24,7 @@ export default function Mensajes() {
   }, []);
 
   return (
-    <Container maxWidth="md" sx={{ mt: 4 }}>
+    <Container maxWidth="xl" sx={{ mt: 4 }}>
       <Paper sx={{ p: 3 }}>
         <Typography variant="h5" gutterBottom>Mensajes Recibidos</Typography>
         <Table size="small">

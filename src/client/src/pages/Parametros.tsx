@@ -46,41 +46,43 @@ export default function Parametros() {
   };
 
   return (
-    <Container maxWidth="md" sx={{ mt: 4 }}>
+    <Container maxWidth="xl" sx={{ mt: 4 }}>
       <Paper sx={{ p: 3 }}>
         <Typography variant="h5" gutterBottom>Parámetros de Configuración</Typography>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>Clave</TableCell>
-              <TableCell>Valor</TableCell>
-              <TableCell>Descripción</TableCell>
-              <TableCell>Última actualización</TableCell>
-              <TableCell>Acción</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {parametros.map((p) => (
-              <TableRow key={p.clave}>
-                <TableCell>{p.clave}</TableCell>
-                <TableCell>
-                  <TextField
-                    value={edit[p.clave] ?? p.valor}
-                    onChange={e => handleEdit(p.clave, e.target.value)}
-                    size="small"
-                  />
-                </TableCell>
-                <TableCell>{p.descripcion}</TableCell>
-                <TableCell>{p.ultima_actualizacion}</TableCell>
-                <TableCell>
-                  <Button variant="contained" size="small" onClick={() => handleSave(p.clave)} disabled={loading}>
-                    Guardar
-                  </Button>
-                </TableCell>
+        <div style={{ overflowX: 'auto' }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Clave</TableCell>
+                <TableCell>Valor</TableCell>
+                <TableCell>Descripción</TableCell>
+                <TableCell>Última actualización</TableCell>
+                <TableCell>Acción</TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHead>
+            <TableBody>
+              {parametros.map((p) => (
+                <TableRow key={p.clave}>
+                  <TableCell>{p.clave}</TableCell>
+                  <TableCell>
+                    <TextField
+                      value={edit[p.clave] ?? p.valor}
+                      onChange={e => handleEdit(p.clave, e.target.value)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>{p.descripcion}</TableCell>
+                  <TableCell>{p.ultima_actualizacion}</TableCell>
+                  <TableCell>
+                    <Button variant="contained" size="small" onClick={() => handleSave(p.clave)} disabled={loading}>
+                      Guardar
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </Paper>
     </Container>
   );
