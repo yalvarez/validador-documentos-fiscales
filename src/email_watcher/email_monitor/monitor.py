@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from attachment_handler.handler import EmailClient
+from ..attachment_handler.handler import EmailClient
 import email
 from email.utils import parsedate_to_datetime
 from datetime import datetime

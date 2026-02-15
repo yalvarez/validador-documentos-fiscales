@@ -5,8 +5,11 @@ class SQLiteDBWrapper(BaseDBWrapper):
     def is_message_processed(self, message_id):
         cur = self.conn.execute('SELECT 1 FROM mensajes_recibidos WHERE message_id = ?', (message_id,))
         return cur.fetchone() is not None
-    def __init__(self, db_path):
-        self.conn = sqlite3.connect(db_path)
+    def __init__(self, db_path, conn=None):
+        if conn is not None:
+            self.conn = conn
+        else:
+            self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.create_facturas_table()
         self.create_mensajes_table()
         self.create_parametros_table()
@@ -25,8 +28,8 @@ class SQLiteDBWrapper(BaseDBWrapper):
     def insert_factura(self, factura_dict, estado):
         self.conn.execute('''
             INSERT INTO facturas (
-                message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion, razon_social_emisor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             factura_dict.get('message_id'),
             factura_dict.get('rncemisor'),
@@ -37,7 +40,8 @@ class SQLiteDBWrapper(BaseDBWrapper):
             factura_dict.get('fechafirma'),
             factura_dict.get('codigoseguridad'),
             estado,
-            factura_dict.get('url_validacion')
+            factura_dict.get('url_validacion'),
+            factura_dict.get('razon_social_emisor')
         ))
         self.conn.commit()
 
@@ -74,6 +78,7 @@ class SQLiteDBWrapper(BaseDBWrapper):
                 codigoseguridad TEXT,
                 estado TEXT,
                 url_validacion TEXT,
+                razon_social_emisor TEXT,
                 estado_envio TEXT DEFAULT 'NO ENVIADO',
                 mensaje_error TEXT,
                 fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP

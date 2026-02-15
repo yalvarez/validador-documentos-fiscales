@@ -23,3 +23,18 @@ class XMLProcessor:
         with open(self.xml_path, 'r', encoding='utf-8') as f:
             data = xmltodict.parse(f.read())
         return data
+
+    def extract_params(self):
+        """
+        Extrae los parámetros requeridos para la consulta API desde el XML (compatibilidad).
+        """
+        data = self.parse()
+        enc = data.get('ECF', {}).get('Encabezado', {})
+        emisor = enc.get('Emisor', {})
+        comprador = enc.get('Comprador', {})
+        iddoc = enc.get('IdDoc', {})
+        return {
+            'rncemisor': emisor.get('RNCEmisor', ''),
+            'ncfelectronico': iddoc.get('eNCF', ''),
+            'rnccomprador': comprador.get('RNCComprador', ''),
+        }

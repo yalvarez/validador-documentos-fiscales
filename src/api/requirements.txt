@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-dotenv
+jose
+ldap3
+requests
+tabulate

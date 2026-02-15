@@ -2,7 +2,7 @@ import sqlite3
 from tabulate import tabulate
 
 class Reportes:
-    def __init__(self, db_path='validador.db'):
+    def __init__(self, db_path):
         self.conn = sqlite3.connect(db_path)
 
     def resumen_validaciones(self):

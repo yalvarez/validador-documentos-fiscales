@@ -1,4 +1,4 @@
-from validator.web_validator import WebValidator
+from common.validator.web_validator import WebValidator
 
 def test_web_validator():
     # Usa una URL de ejemplo (ajusta según el sitio real)

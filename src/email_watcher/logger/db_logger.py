@@ -1,8 +1,12 @@
 from datetime import datetime
 
+from db.db_factory import get_db_wrapper
+from db.base_db_wrapper import BaseDBWrapper
+
 class DBLogger:
-    def __init__(self, db_path='validador.db'):
-        self.conn = sqlite3.connect(db_path)
+    def __init__(self, db_engine, db_config):
+        self.db: BaseDBWrapper = get_db_wrapper(db_engine, db_config)
+        self.conn = self.db.conn
         self._create_table()
 
     def _create_table(self):
@@ -35,12 +39,22 @@ class DBLogger:
                 codigoseguridad TEXT,
                 estado TEXT,
                 url_validacion TEXT,
+                razon_social_emisor TEXT,
                 estado_envio TEXT DEFAULT 'NO ENVIADO',
                 mensaje_error TEXT,
                 fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         self.conn.commit()
+        # Migración automática: agrega el campo si falta
+        cur = self.conn.execute("PRAGMA table_info(facturas)")
+        columns = [row[1] for row in cur.fetchall()]
+        if 'razon_social_emisor' not in columns:
+            try:
+                self.conn.execute("ALTER TABLE facturas ADD COLUMN razon_social_emisor TEXT")
+                self.conn.commit()
+            except Exception as e:
+                pass  # Ya existe o error de migración
 
     def create_mensajes_table(self):
         self.conn.execute('''
@@ -57,19 +71,20 @@ class DBLogger:
     def insert_factura(self, factura_dict, estado):
         self.conn.execute('''
             INSERT INTO facturas (
-                message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion, razon_social_emisor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             factura_dict.get('message_id'),
-            factura_dict.get('rncemisor'),
-            factura_dict.get('rnccomprador'),
-            factura_dict.get('ncfelectronico'),
-            factura_dict.get('fechaemision'),
-            factura_dict.get('montototal'),
-            factura_dict.get('fechafirma'),
-            factura_dict.get('codigoseguridad'),
+            factura_dict.get('RncEmisor'),
+            factura_dict.get('RncComprador'),
+            factura_dict.get('ENCF'),
+            factura_dict.get('FechaEmision'),
+            factura_dict.get('MontoTotal'),
+            factura_dict.get('FechaFirma'),
+            factura_dict.get('CodigoSeguridad'),
             estado,
-            factura_dict.get('url_validacion')
+            factura_dict.get('url_validacion'),
+            factura_dict.get('razon_social_emisor')
         ))
         self.conn.commit()
 

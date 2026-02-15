@@ -1,0 +1,11 @@
+python-dotenv
+requests
+pdfplumber
+pillow
+pyzbar
+beautifulsoup4
+lxml
+xmltodict
+imapclient
+O365
+tabulate

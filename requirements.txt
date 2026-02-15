@@ -1,3 +1,18 @@
+uvicorn
+urllib3
+python-jose
+fastapi
+jose
+ldap3
+mysql-connector-python
+pyodbc
+Pillow
+pyzbar
+pdfplumber
+beautifulsoup4
+xmltodict
+tabulate
+python-dotenv
 O365
 imapclient
 pyzbar
@@ -7,4 +22,3 @@ requests
 beautifulsoup4
 lxml
 xmltodict
-logging

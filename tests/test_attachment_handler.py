@@ -1,6 +1,6 @@
 import os
 from unittest.mock import MagicMock
-from attachment_handler.handler import AttachmentHandler
+from common.attachment_handler.handler import AttachmentHandler
 
 class DummyAttachment:
     def __init__(self, name):

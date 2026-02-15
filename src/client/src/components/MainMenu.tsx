@@ -1,4 +1,4 @@
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
+import { AppBar, Toolbar, Typography, Button } from '@mui/material';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 

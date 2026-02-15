@@ -1,5 +1,5 @@
 import os
-from pdf_processor.extractor import PDFProcessor
+from common.pdf_processor.extractor import PDFProcessor
 
 def test_extract_qr_url():
     # Usa un PDF de ejemplo con QR (coloca el archivo en tests/sample.pdf)

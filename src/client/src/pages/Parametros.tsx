@@ -31,7 +31,9 @@ export default function Parametros() {
   };
 
   const handleSave = async (clave: string) => {
-    await axios.post(`/parametros/${clave}`, { valor: edit[clave] }, {
+    const param = parametros.find(p => p.clave === clave);
+    const descripcion = param?.descripcion;
+    const res = await axios.post(`/parametros/${clave}`, { valor: edit[clave], descripcion }, {
       baseURL: import.meta.env.VITE_API_URL,
     });
     setEdit((prev) => {
@@ -39,11 +41,8 @@ export default function Parametros() {
       delete newEdit[clave];
       return newEdit;
     });
-    // Refrescar
-    const res = await axios.get('/parametros/', {
-      baseURL: import.meta.env.VITE_API_URL,
-    });
-    setParametros(res.data);
+    // Actualizar solo el parámetro editado en el estado
+    setParametros((prev) => prev.map(p => p.clave === clave ? res.data : p));
   };
 
   return (

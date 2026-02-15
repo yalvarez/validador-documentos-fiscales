@@ -1,5 +1,5 @@
 import os
-from xml_processor.parser import XMLProcessor
+from common.xml_processor.parser import XMLProcessor
 
 def test_parse_xml():
     xml_path = os.path.join(os.path.dirname(__file__), 'sample.xml')
