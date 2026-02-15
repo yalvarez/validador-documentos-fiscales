@@ -7,7 +7,7 @@ services:
     volumes:
       - ./db.sqlite3:/app/db.sqlite3
     ports:
-      - "8000:8000"
+      - "7000:7000"
     restart: unless-stopped
 
   frontend:
