@@ -82,7 +82,7 @@ def listar_facturas():
 @app.get("/mensajes/", response_model=list[MensajeOut])
 def listar_mensajes():
     db = get_db()  # No usar el wrapper de parámetros para evitar problemas de conexión, crear uno nuevo directamente
-    rows = db.fetchall('SELECT * FROM mensajes_recibidos ORDER BY fecha DESC')
+    rows = db.fetchall('SELECT id, message_id, fecha, remitente, asunto FROM mensajes_recibidos ORDER BY fecha DESC')
     return [
         MensajeOut(
             id=row[0],
