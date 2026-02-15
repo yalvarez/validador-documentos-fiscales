@@ -16,7 +16,7 @@ export default function Mensajes() {
   useEffect(() => {
     const fetchMensajes = async () => {
       const res = await axios.get('/mensajes/', {
-        baseURL: import.meta.env.VITE_API_URL,
+        baseURL: window.VITE_API_URL,
       });
       setMensajes(res.data);
     };

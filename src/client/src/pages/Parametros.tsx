@@ -18,7 +18,7 @@ export default function Parametros() {
     const fetchParametros = async () => {
       setLoading(true);
       const res = await axios.get('/parametros/', {
-        baseURL: import.meta.env.VITE_API_URL,
+        baseURL: window.VITE_API_URL,
       });
       setParametros(res.data);
       setLoading(false);
@@ -34,7 +34,7 @@ export default function Parametros() {
     const param = parametros.find(p => p.clave === clave);
     const descripcion = param?.descripcion;
     const res = await axios.post(`/parametros/${clave}`, { valor: edit[clave], descripcion }, {
-      baseURL: import.meta.env.VITE_API_URL,
+      baseURL: window.VITE_API_URL,
     });
     setEdit((prev) => {
       const newEdit = { ...prev };

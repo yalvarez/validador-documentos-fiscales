@@ -26,7 +26,7 @@ export default function Consulta() {
     const fetchFacturas = async () => {
       setLoading(true);
       const res = await axios.get('/facturas', {
-        baseURL: import.meta.env.VITE_API_URL,
+        baseURL: window.VITE_API_URL,
         params: filtro ? { filtro } : {},
       });
       setFacturas(res.data);

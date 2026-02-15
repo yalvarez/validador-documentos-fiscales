@@ -26,7 +26,7 @@ export default function Facturas() {
   useEffect(() => {
     const fetchFacturas = async () => {
       const res = await axios.get('/facturas/', {
-        baseURL: import.meta.env.VITE_API_URL,
+        baseURL: window.VITE_API_URL,
       });
       setFacturas(res.data);
     };
