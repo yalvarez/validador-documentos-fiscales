@@ -6,6 +6,7 @@ const menuItems = [
   { label: 'Dashboard', path: '/dashboard' },
   { label: 'Parámetros', path: '/parametros' },
   { label: 'Consulta', path: '/consulta' },
+  { label: 'Facturas', path: '/facturas' },
 ];
 
 export default function MainMenu() {
