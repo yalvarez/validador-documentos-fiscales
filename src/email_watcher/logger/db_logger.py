@@ -75,7 +75,7 @@ class DBLogger:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             factura_dict.get('message_id'),
-            factura_dict.get('RncEmisor'),
+            factura_dict.get('RNCEmisor'),
             factura_dict.get('RncComprador'),
             factura_dict.get('ENCF'),
             factura_dict.get('FechaEmision'),

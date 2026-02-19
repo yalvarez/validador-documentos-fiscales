@@ -111,7 +111,7 @@ def main():
                     estado_web = web_result
                 logger.info(f'Estado web validado: {estado_web}, Razón social emisor: {razon_social_emisor}')
 
-            if factura_json.get('RncEmisor') and factura_json.get('ENCF') and factura_json.get('CodigoSeguridad'):
+            if factura_json.get('RNCEmisor') and factura_json.get('ENCF') and factura_json.get('CodigoSeguridad'):
                 if razon_social_emisor:
                     factura_json['razon_social_emisor'] = razon_social_emisor
                 logger.info(f'Insertando factura consolidada: {json.dumps(factura_json, ensure_ascii=False, indent=2)}')
