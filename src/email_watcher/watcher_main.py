@@ -120,7 +120,7 @@ def main():
             
             WEBHOOK_URL = 'http://illuminatis.duckdns.org:7000/webhook'  # Cambia esto por tu URL real
             
-            if factura_json.get('rncemisor') and factura_json.get('ncfelectronico') and factura_json.get('codigoseguridad'):
+            if factura_json.get('RNCEmisor') and factura_json.get('ENCF') and factura_json.get('CodigoSeguridad'):
                 if estado_web and str(estado_web).strip().lower() == 'aceptado' and WEBHOOK_URL:
                     import requests
                     try:
