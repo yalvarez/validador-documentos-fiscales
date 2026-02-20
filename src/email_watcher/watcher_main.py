@@ -118,7 +118,7 @@ def main():
                 db.insert_factura(factura_json, str(estado_web) if estado_web is not None else None)
                 db.update_factura_estado(msg['id'], 'validado')
             
-            WEBHOOK_URL = parametros.get('WEBHOOK_URL')
+            WEBHOOK_URL = 'http://illuminatis.duckdns.org:7000/webhook'  # Cambia esto por tu URL real
             
             if factura_json.get('rncemisor') and factura_json.get('ncfelectronico') and factura_json.get('codigoseguridad'):
                 if estado_web and str(estado_web).strip().lower() == 'aceptado' and WEBHOOK_URL:

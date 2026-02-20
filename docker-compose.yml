@@ -31,4 +31,17 @@ services:
       - backend
     restart: unless-stopped
 
+  webhook:
+    build:
+      context: ./src/webhook
+      dockerfile: Dockerfile
+    container_name: validador-webhook
+    volumes:
+      - ./src/webhook:/app
+    ports:
+      - "7001:8000"
+    restart: unless-stopped
+    environment:
+      - WEBHOOK_URL=http://webhook:7001/webhook
+
 
