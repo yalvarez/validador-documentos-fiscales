@@ -20,7 +20,7 @@ RUN mkdir -p /app/db
 RUN mkdir -p /app/db
 # Copiar solo los archivos de código fuente de db (sin db.sqlite3)
 COPY db/*.py /app/db/
-COPY db/__pycache__/ /app/db/__pycache__/
+	# COPY db/__pycache__/ /app/db/__pycache__/
 
 # Si tienes archivos de configuración, descomenta la siguiente línea
 # COPY .env ./
