@@ -25,13 +25,12 @@ class SQLiteDBWrapper(BaseDBWrapper):
         cur.execute(query, params or [])
         return cur.fetchall()
 
-    def insert_factura(self, factura_dict, estado):
+    def insert_factura(self, factura_dict):
         self.conn.execute('''
             INSERT INTO facturas (
-                message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion, razon_social_emisor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion, razon_social_emisor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            factura_dict.get('message_id'),
             factura_dict.get('rncemisor'),
             factura_dict.get('rnccomprador'),
             factura_dict.get('ncfelectronico'),
@@ -39,7 +38,7 @@ class SQLiteDBWrapper(BaseDBWrapper):
             factura_dict.get('montototal'),
             factura_dict.get('fechafirma'),
             factura_dict.get('codigoseguridad'),
-            estado,
+            factura_dict.get('estado'),            
             factura_dict.get('url_validacion'),
             factura_dict.get('razon_social_emisor')
         ))

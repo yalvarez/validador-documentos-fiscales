@@ -1,5 +1,15 @@
+
 from pydantic import BaseModel
 from typing import Optional
+from fastapi import UploadFile, File
+
+class ValidarFacturaIn(BaseModel):
+    rnc_emisor: str
+
+class ValidacionFacturaOut(BaseModel):
+    rnc_emisor: Optional[str] = None
+    razon_social_emisor: Optional[str] = None
+    estado: Optional[str] = None
 
 class FacturaOut(BaseModel):
     id: Optional[int] = None

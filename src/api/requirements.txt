@@ -1,7 +1,14 @@
 fastapi
 uvicorn
 python-dotenv
-jose
+python-jose
 ldap3
 requests
 tabulate
+pyzbar
+pdfplumber
+Pillow
+beautifulsoup4
+xmltodict
+lxml
+python-multipart

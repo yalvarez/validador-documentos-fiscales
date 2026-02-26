@@ -5,9 +5,9 @@ services:
       dockerfile: api/Dockerfile
     container_name: validador-backend
     volumes:
-      - ./db.sqlite3:/app/db.sqlite3
+      - ./db.sqlite3:/app/db/db.sqlite3
     ports:
-      - "7000:7000"
+      - "7000:8000"
     restart: unless-stopped
 
   frontend:
@@ -20,28 +20,5 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-  watcher:
-    build:
-      context: ./src
-      dockerfile: email_watcher/Dockerfile
-    container_name: validador-watcher
-    volumes:
-      - ./db.sqlite3:/app/db.sqlite3
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  webhook:
-    build:
-      context: ./src/webhook
-      dockerfile: Dockerfile
-    container_name: validador-webhook
-    volumes:
-      - ./src/webhook:/app
-    ports:
-      - "7001:8000"
-    restart: unless-stopped
-    environment:
-      - WEBHOOK_URL=http://webhook:7001/webhook
 
 

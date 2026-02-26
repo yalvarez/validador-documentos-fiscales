@@ -1,7 +1,6 @@
-
 import os
 import requests
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Header
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
 from fastapi.middleware.cors import CORSMiddleware
 from api.schemas import ParametroOut, ParametroIn, FacturaOut, MensajeOut
@@ -10,14 +9,18 @@ from db.db_factory import get_db_wrapper
 from dotenv import load_dotenv
 from jose import jwt, JWTError
 from ldap3 import Server, Connection, ALL, NTLM
+from common.pdf_processor.extractor import PDFProcessor
+from common.validator.web_validator import WebValidator
+import tempfile
 
 load_dotenv()
 
+API_KEYS = [k.strip() for k in os.getenv('API_KEYS', 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
 DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite')
 DB_CONN_STR = os.getenv('DB_CONNECTION_STRING', './db.sqlite3')
 
 app = FastAPI()
-
+    
 # Configurar CORS para permitir peticiones desde el frontend
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +31,10 @@ app.add_middleware(
 )
 
 security = HTTPBasic()
+
+def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key not in API_KEYS:
+        raise HTTPException(status_code=401, detail="API Key inválida")
 
 def get_db():
     db_config = {'db_path': DB_CONN_STR} if DB_ENGINE == 'sqlite' else DB_CONN_STR
@@ -54,6 +61,68 @@ def get_jwks():
     resp.raise_for_status()
     return resp.json()
 
+from api.schemas import ValidacionFacturaOut, ValidarFacturaIn
+
+@app.post("/validar-pdf", response_model=ValidacionFacturaOut)
+async def validar_pdf(
+    file: UploadFile = File(...),
+    rnc_emisor: str = None,
+    x_api_key: str = Depends(verify_api_key)
+):
+    # Guardar PDF temporalmente
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
+        content = await file.read()
+        tmp_pdf.write(content)
+        tmp_pdf.flush()
+        pdf_path = tmp_pdf.name
+
+    # Extraer datos del QR
+    pdf_proc = PDFProcessor(pdf_path)
+    qr_url = pdf_proc.extract_qr_url()
+    params = pdf_proc.extract_qr_params() if qr_url else {}
+
+    # Validar RNC del emisor
+    rnc_pdf = params.get('rncemisor') or params.get('RNCEmisor')
+    
+    # Validar comprobante
+    estado = None
+    razon_social_emisor = None
+
+    if rnc_emisor and rnc_pdf and rnc_emisor != rnc_pdf:
+        estado = "rnc-no-coincide"
+    else:
+        if qr_url:
+            web_validator = WebValidator()
+            web_result = web_validator.validate(qr_url)
+            if isinstance(web_result, dict):
+                estado = web_result.get('estado')
+                razon_social_emisor = web_result.get('razon_social_emisor')
+            else:
+                estado = web_result
+
+    # Guardar en BD para trazabilidad
+    db = get_db()
+    factura_dict = {
+        'rncemisor': params.get('rncemisor') or params.get('RNCEmisor'),
+        'rnccomprador': params.get('rnccomprador') or params.get('RNCComprador'),
+        'ncfelectronico': params.get('ncfelectronico') or params.get('ENCF'),
+        'fechaemision': params.get('fechaemision') or params.get('FechaEmision'),
+        'montototal': params.get('montototal') or params.get('MontoTotal'),
+        'fechafirma': params.get('fechafirma') or params.get('FechaFirma'),
+        'codigoseguridad': params.get('codigoseguridad') or params.get('CodigoSeguridad'),
+        'url_validacion': qr_url,
+        'razon_social_emisor': razon_social_emisor,
+        'estado': estado
+    }
+    
+    db.insert_factura(factura_dict)
+
+    return ValidacionFacturaOut(
+        rnc_emisor=factura_dict['rncemisor'],
+        razon_social_emisor=factura_dict['razon_social_emisor'],
+        estado=factura_dict['estado']
+    )
+
 # --- ENDPOINTS GET PARA FACTURAS Y MENSAJES ---
 @app.get("/facturas/", response_model=list[FacturaOut])
 def listar_facturas():
@@ -76,20 +145,6 @@ def listar_facturas():
             estado_envio=row[12],
             mensaje_error=row[13],
             fecha=row[14],
-        ) for row in rows
-    ]
-
-@app.get("/mensajes/", response_model=list[MensajeOut])
-def listar_mensajes():
-    db = get_db()  # No usar el wrapper de parámetros para evitar problemas de conexión, crear uno nuevo directamente
-    rows = db.fetchall('SELECT id, message_id, fecha, remitente, asunto FROM mensajes_recibidos ORDER BY fecha DESC')
-    return [
-        MensajeOut(
-            id=row[0],
-            message_id=row[1],
-            fecha=row[2],
-            remitente=row[3],
-            asunto=row[4],
         ) for row in rows
     ]
 
