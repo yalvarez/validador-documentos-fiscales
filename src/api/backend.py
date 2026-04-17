@@ -61,7 +61,72 @@ def get_jwks():
     resp.raise_for_status()
     return resp.json()
 
-from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn
+from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn, ValidarFacturaBase64In
+import base64
+# --- ENDPOINT PDF BASE64 ---
+@app.post("/validar-pdf-base64", response_model=ValidacionFacturaOut)
+async def validar_pdf_base64(
+    body: ValidarFacturaBase64In,
+    x_api_key: str = Depends(verify_api_key)
+):
+    # Decodificar el PDF desde base64
+    try:
+        pdf_bytes = base64.b64decode(body.pdf_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Base64 inválido")
+
+    # Guardar PDF temporalmente
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
+        tmp_pdf.write(pdf_bytes)
+        tmp_pdf.flush()
+        pdf_path = tmp_pdf.name
+
+    # Extraer datos del QR
+    pdf_proc = PDFProcessor(pdf_path)
+    qr_url = pdf_proc.extract_qr_url()
+    params = pdf_proc.extract_qr_params() if qr_url else {}
+
+    # Validar RNC del emisor
+    rnc_pdf = params.get('rncemisor') or params.get('RNCEmisor')
+    rnc_emisor = body.rnc_emisor
+
+    # Validar comprobante
+    estado = None
+    razon_social_emisor = None
+
+    if rnc_emisor and rnc_pdf and rnc_emisor != rnc_pdf:
+        estado = "rnc-no-coincide"
+    else:
+        if qr_url:
+            web_validator = WebValidator()
+            web_result = web_validator.validate(qr_url)
+            if isinstance(web_result, dict):
+                estado = web_result.get('estado')
+                razon_social_emisor = web_result.get('razon_social_emisor')
+            else:
+                estado = web_result
+
+    # Guardar en BD para trazabilidad
+    db = get_db()
+    factura_dict = {
+        'rncemisor': params.get('rncemisor') or params.get('RNCEmisor'),
+        'rnccomprador': params.get('rnccomprador') or params.get('RNCComprador'),
+        'ncfelectronico': params.get('ncfelectronico') or params.get('ENCF'),
+        'fechaemision': params.get('fechaemision') or params.get('FechaEmision'),
+        'montototal': params.get('montototal') or params.get('MontoTotal'),
+        'fechafirma': params.get('fechafirma') or params.get('FechaFirma'),
+        'codigoseguridad': params.get('codigoseguridad') or params.get('CodigoSeguridad'),
+        'url_validacion': qr_url,
+        'razon_social_emisor': razon_social_emisor,
+        'estado': estado
+    }
+    db.insert_factura(factura_dict)
+
+    return ValidacionFacturaOut(
+        rnc_emisor=factura_dict['rncemisor'],
+        razon_social_emisor=factura_dict['razon_social_emisor'],
+        estado=factura_dict['estado']
+    )
 
 # Nuevo endpoint: consulta por parámetros de URL del PDF
 @app.post("/consulta-factura-params", response_model=ValidacionFacturaOut)

@@ -3,8 +3,14 @@ from pydantic import BaseModel
 from typing import Optional
 from fastapi import UploadFile, File
 
+
 class ValidarFacturaIn(BaseModel):
     rnc_emisor: str
+
+# Esquema para recibir PDF en base64
+class ValidarFacturaBase64In(BaseModel):
+    pdf_base64: str
+    rnc_emisor: str = None
 
 class ValidacionFacturaOut(BaseModel):
     rnc_emisor: Optional[str] = None
