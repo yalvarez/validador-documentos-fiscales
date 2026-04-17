@@ -1,0 +1,201 @@
+DOCUMENTACION DE RESPUESTAS DE ENDPOINTS
+======================================
+
+Proyecto: validador-documentos-fiscales
+Fecha: 2026-04-09
+
+--------------------------------------------------
+1) POST /validar-pdf
+--------------------------------------------------
+Descripcion:
+Valida un PDF de factura a partir del QR y devuelve el estado encontrado.
+
+Respuesta 200 OK:
+{
+  "rnc_emisor": "string | null",
+  "razon_social_emisor": "string | null",
+  "estado": "string | null"
+}
+
+Ejemplo exitoso:
+{
+  "rnc_emisor": "101234567",
+  "razon_social_emisor": "EMPRESA DEMO SRL",
+  "estado": "VIGENTE"
+}
+
+Ejemplo cuando el RNC no coincide:
+{
+  "rnc_emisor": "101234567",
+  "razon_social_emisor": null,
+  "estado": "rnc-no-coincide"
+}
+
+Ejemplo cuando falla la validacion externa:
+{
+  "rnc_emisor": "101234567",
+  "razon_social_emisor": null,
+  "estado": "Error HTTP: 500"
+}
+
+Notas:
+- Requiere header: x-api-key
+- El valor de "estado" puede ser, segun el resultado: VIGENTE, No encontrado, rnc-no-coincide, Error HTTP: <codigo>, o null.
+
+--------------------------------------------------
+2) GET /facturas/
+--------------------------------------------------
+Descripcion:
+Retorna el listado de facturas registradas en la base de datos.
+
+Respuesta 200 OK:
+[
+  {
+    "id": 1,
+    "message_id": "string | null",
+    "rncemisor": "string | null",
+    "rnccomprador": "string | null",
+    "ncfelectronico": "string | null",
+    "fechaemision": "string | null",
+    "montototal": "string | null",
+    "fechafirma": "string | null",
+    "codigoseguridad": "string | null",
+    "estado": "string | null",
+    "url_validacion": "string | null",
+    "razon_social_emisor": "string | null",
+    "estado_envio": "string | null",
+    "mensaje_error": "string | null",
+    "fecha": "string | null"
+  }
+]
+
+--------------------------------------------------
+3) GET /parametros/
+--------------------------------------------------
+Descripcion:
+Retorna el listado completo de parametros configurados.
+
+Respuesta 200 OK:
+[
+  {
+    "clave": "string",
+    "valor": "string",
+    "descripcion": "string | null",
+    "ultima_actualizacion": "string | null"
+  }
+]
+
+--------------------------------------------------
+4) GET /parametros/{clave}
+--------------------------------------------------
+Descripcion:
+Retorna un parametro especifico segun la clave enviada.
+
+Respuesta 200 OK:
+{
+  "clave": "AZURE_TENANT_ID",
+  "valor": "xxxxxxxx",
+  "descripcion": "Tenant de Azure",
+  "ultima_actualizacion": "2026-04-09 10:00:00"
+}
+
+Si el parametro no existe, responde:
+{
+  "detail": "Parámetro no encontrado"
+}
+
+--------------------------------------------------
+5) POST /parametros/{clave}
+--------------------------------------------------
+Descripcion:
+Actualiza o registra el valor de un parametro y devuelve el registro actualizado.
+
+Respuesta 200 OK:
+{
+  "clave": "AZURE_TENANT_ID",
+  "valor": "nuevo_valor",
+  "descripcion": "descripcion opcional",
+  "ultima_actualizacion": "2026-04-09 10:05:00"
+}
+
+--------------------------------------------------
+6) POST /webhook
+--------------------------------------------------
+Descripcion:
+Recibe el payload del webhook y lo guarda en base de datos.
+
+Respuesta 200 OK:
+{
+  "status": "ok"
+}
+
+--------------------------------------------------
+7) GET /
+--------------------------------------------------
+Descripcion:
+Muestra una vista HTML con los datos capturados por el webhook.
+
+Respuesta 200 OK:
+- No devuelve JSON.
+- Devuelve una pagina HTML con una tabla de registros.
+
+--------------------------------------------------
+ERRORES COMUNES
+--------------------------------------------------
+401 Unauthorized:
+{
+  "detail": "API Key inválida"
+}
+
+422 Unprocessable Entity:
+{
+  "detail": [
+    {
+      "loc": ["body", "file"],
+      "msg": "Field required",
+      "type": "missing"
+    }
+  ]
+}
+
+Observacion:
+Aunque existe el esquema MensajeOut en schemas.py, actualmente no hay un endpoint publico que lo exponga.
+
+--------------------------------------------------
+8) POST /consulta-factura-params
+--------------------------------------------------
+Descripcion:
+Permite validar una factura enviando directamente los parámetros que normalmente vienen en la URL del PDF. El sistema construye la URL de consulta y realiza la validación usando el scrapper.
+
+Cuerpo esperado (JSON):
+{
+  "RncEmisor": "string (requerido)",
+  "RncComprador": "string (opcional)",
+  "ENCF": "string (requerido)",
+  "FechaEmision": "string (opcional)",
+  "MontoTotal": "string (opcional)",
+  "FechaFirma": "string (opcional)",
+  "CodigoSeguridad": "string (opcional)"
+}
+
+Respuesta 200 OK:
+{
+  "rnc_emisor": "string",
+  "razon_social_emisor": "string | null",
+  "estado": "string | null"
+}
+
+Ejemplo de request:
+{
+  "RncEmisor": "101616202",
+  "RncComprador": "101107146",
+  "ENCF": "E310000002882",
+  "FechaEmision": "10-02-2026",
+  "MontoTotal": "1250.00",
+  "FechaFirma": "10-02-2026 09:22:21",
+  "CodigoSeguridad": "BuLkvC"
+}
+
+Notas:
+- Requiere header: x-api-key
+- El valor de "estado" puede ser, según el resultado: VIGENTE, No encontrado, rnc-no-coincide, Error HTTP: <codigo>, o null.

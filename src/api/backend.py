@@ -61,7 +61,49 @@ def get_jwks():
     resp.raise_for_status()
     return resp.json()
 
-from api.schemas import ValidacionFacturaOut, ValidarFacturaIn
+from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn
+
+# Nuevo endpoint: consulta por parámetros de URL del PDF
+@app.post("/consulta-factura-params", response_model=ValidacionFacturaOut)
+def consulta_factura_params(
+    body: ConsultaFacturaParamsIn,
+    x_api_key: str = Depends(verify_api_key)
+):
+    # Construir la URL de consulta igual que la del PDF
+    base_url = "https://ecf.dgii.gov.do/eCF/ConsultaTimbre"
+    params = []
+    if body.RncEmisor:
+        params.append(f"RncEmisor={body.RncEmisor}")
+    if body.RncComprador:
+        params.append(f"RncComprador={body.RncComprador}")
+    if body.ENCF:
+        params.append(f"ENCF={body.ENCF}")
+    if body.FechaEmision:
+        params.append(f"FechaEmision={body.FechaEmision}")
+    if body.MontoTotal:
+        params.append(f"MontoTotal={body.MontoTotal}")
+    if body.FechaFirma:
+        params.append(f"FechaFirma={body.FechaFirma}")
+    if body.CodigoSeguridad:
+        params.append(f"CodigoSeguridad={body.CodigoSeguridad}")
+    url = base_url + "?" + "&".join(params)
+
+    # Validar usando el scrapper
+    web_validator = WebValidator()
+    web_result = web_validator.validate(url)
+    estado = None
+    razon_social_emisor = None
+    if isinstance(web_result, dict):
+        estado = web_result.get('estado')
+        razon_social_emisor = web_result.get('razon_social_emisor')
+    else:
+        estado = web_result
+
+    return ValidacionFacturaOut(
+        rnc_emisor=body.RncEmisor,
+        razon_social_emisor=razon_social_emisor,
+        estado=estado
+    )
 
 @app.post("/validar-pdf", response_model=ValidacionFacturaOut)
 async def validar_pdf(

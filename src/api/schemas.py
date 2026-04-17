@@ -45,3 +45,14 @@ class ParametroOut(BaseModel):
     valor: str
     descripcion: Optional[str] = None
     ultima_actualizacion: Optional[str] = None
+
+
+# Esquema para los parámetros de la URL del PDF
+class ConsultaFacturaParamsIn(BaseModel):
+    RncEmisor: str
+    RncComprador: Optional[str] = None
+    ENCF: str
+    FechaEmision: Optional[str] = None
+    MontoTotal: Optional[str] = None
+    FechaFirma: Optional[str] = None
+    CodigoSeguridad: Optional[str] = None
