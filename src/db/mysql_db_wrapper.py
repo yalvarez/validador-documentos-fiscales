@@ -23,7 +23,7 @@ class MySQLDBWrapper(BaseDBWrapper):
         cur.execute(query, params or [])
         return cur.fetchall()
 
-    def insert_factura(self, factura_dict, estado):
+    def insert_factura(self, factura_dict):
         self.conn.cursor().execute('''
             INSERT INTO facturas (
                 message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion
@@ -37,7 +37,7 @@ class MySQLDBWrapper(BaseDBWrapper):
             factura_dict.get('montototal'),
             factura_dict.get('fechafirma'),
             factura_dict.get('codigoseguridad'),
-            estado,
+            factura_dict.get('estado'),
             factura_dict.get('url_validacion')
         ))
         self.conn.commit()

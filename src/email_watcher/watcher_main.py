@@ -115,7 +115,8 @@ def main():
                 if razon_social_emisor:
                     factura_json['razon_social_emisor'] = razon_social_emisor
                 logger.info(f'Insertando factura consolidada: {json.dumps(factura_json, ensure_ascii=False, indent=2)}')
-                db.insert_factura(factura_json, str(estado_web) if estado_web is not None else None)
+                factura_json['Estado'] = str(estado_web) if estado_web is not None else None
+                db.insert_factura(factura_json)
                 db.update_factura_estado(msg['id'], 'validado')
             
             WEBHOOK_URL = 'http://illuminatis.duckdns.org:7000/webhook'  # Cambia esto por tu URL real

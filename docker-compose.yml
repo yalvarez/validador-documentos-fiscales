@@ -10,15 +10,15 @@ services:
       - "7000:8000"
     restart: unless-stopped
 
-  frontend:
-    build:
-      context: ./src/client
-      dockerfile: Dockerfile
-    container_name: validador-frontend
-    ports:
-      - "5173:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
+  # frontend:
+  #   build:
+  #     context: ./src/client
+  #     dockerfile: Dockerfile
+  #   container_name: validador-frontend
+  #   ports:
+  #     - "5173:80"
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
 
 

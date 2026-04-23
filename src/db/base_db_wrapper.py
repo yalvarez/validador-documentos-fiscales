@@ -5,7 +5,7 @@ class BaseDBWrapper:
         raise NotImplementedError
     def fetchall(self, query, params=None):
         raise NotImplementedError
-    def insert_factura(self, factura_dict, estado):
+    def insert_factura(self, factura_dict):
         raise NotImplementedError
     def insert_mensaje(self, message_id, remitente, asunto):
         raise NotImplementedError

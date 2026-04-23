@@ -68,7 +68,7 @@ class DBLogger:
         ''')
         self.conn.commit()
 
-    def insert_factura(self, factura_dict, estado):
+    def insert_factura(self, factura_dict):
         self.conn.execute('''
             INSERT INTO facturas (
                 message_id, rncemisor, rnccomprador, ncfelectronico, fechaemision, montototal, fechafirma, codigoseguridad, estado, url_validacion, razon_social_emisor
@@ -82,7 +82,7 @@ class DBLogger:
             factura_dict.get('MontoTotal'),
             factura_dict.get('FechaFirma'),
             factura_dict.get('CodigoSeguridad'),
-            estado,
+            factura_dict.get('Estado'),
             factura_dict.get('url_validacion'),
             factura_dict.get('razon_social_emisor')
         ))
