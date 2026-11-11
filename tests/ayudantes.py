@@ -42,3 +42,22 @@ def ecf_de_prueba(encf: str, rnc_emisor: str = '101616202', fecha_firma: datetim
     xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', f'<eNCF>{encf}</eNCF>'.encode())
     xml = xml.replace(b'<RNCEmisor>101616202</RNCEmisor>', f'<RNCEmisor>{rnc_emisor}</RNCEmisor>'.encode())
     return firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, fecha_firma)
+
+
+# --- Tarea 8: consulta a la DGII ---
+from typing import Callable  # noqa: E402
+
+from common.ecf.dgii import RespuestaDGII  # noqa: E402
+
+DATOS_ACEPTADO = RespuestaDGII('DATOS', 'Aceptado', 'EMPRESAS ASAVIM S R L')
+NO_ENCONTRADO_R = RespuestaDGII('NO_ENCONTRADO')
+ERROR_R = RespuestaDGII('ERROR', detalle='HTTP 500')
+
+
+def fijo(r: RespuestaDGII) -> Callable[[str], RespuestaDGII]:
+    """Consultor de DGII que devuelve siempre `r`."""
+    return lambda url: r
+
+
+def fixture_dgii(nombre: str) -> str:
+    return (RAIZ / 'tests/ecf/fixtures/dgii' / nombre).read_text(encoding='utf-8')
