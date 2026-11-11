@@ -75,3 +75,38 @@ def campos_minimos(encf: str = 'E310000002882', **cambios) -> dict:
     }
     campos.update(cambios)
     return campos
+
+
+# --- Tarea 7: cruce y orquestador ---
+import dataclasses  # noqa: E402
+
+import common.ecf as _paquete_ecf  # noqa: E402
+from common.ecf.validacion import ConfigValidacion  # noqa: E402
+from common.ecf.verificaciones.estructura import XSD_DIR  # noqa: E402
+
+QR_MUESTRA = {
+    'RncEmisor': '101616202', 'RncComprador': '101107146', 'ENCF': 'E310000002882',
+    'FechaEmision': '10-02-2026', 'MontoTotal': '1250.00', 'FechaFirma': '10-02-2026 09:22:21',
+    'CodigoSeguridad': 'BuLkvC',
+}
+
+
+def _lanza(*args, **kwargs):
+    raise ConnectionError('sin red en pruebas')
+
+
+CONFIG_SIN_RED = ConfigValidacion(
+    XSD_DIR, Path(_paquete_ecf.__file__).parent / 'confianza', None,
+    ocsp_post=_lanza, descargar=_lanza)
+
+
+def config_con(**cambios) -> ConfigValidacion:
+    return dataclasses.replace(CONFIG_SIN_RED, **cambios)
+
+
+def zbar_disponible() -> bool:
+    try:
+        import pyzbar.pyzbar  # noqa: F401
+        return True
+    except Exception:
+        return False
