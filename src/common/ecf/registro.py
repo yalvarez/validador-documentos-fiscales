@@ -8,9 +8,9 @@ from typing import Callable
 
 from api.parametros_manager import ParametrosManager
 from common.ecf.dgii import RespuestaDGII, construir_url_consulta, consultar_dgii
-from common.ecf.lectura import DatosECF, leer_ecf
-from common.ecf.modelos import (DOCUMENTO_REEMPLAZADO, PENDIENTE, REGISTRO, ZONA_RD,
-                                ResultadoValidacionXML)
+from common.ecf.lectura import leer_ecf
+from common.ecf.modelos import (CAMBIO_ESTADO, DOCUMENTO_RECHAZADO, DOCUMENTO_REEMPLAZADO, OK, PENDIENTE,
+                                REGISTRO, ZONA_RD, ResultadoValidacionXML)
 from common.ecf.seguimiento import (ConfigSeguimiento, calendario_inicial, config_seguimiento_desde_parametros,
                                     decidir)
 from common.ecf.validacion import ConfigValidacion, config_validacion_desde_parametros, validar_xml
@@ -40,7 +40,7 @@ def extraer_qr_params(pdf_bytes: bytes) -> dict | None:
                 pass
 
 
-def campos_de_validacion(d: DatosECF | None, r: ResultadoValidacionXML) -> dict:
+def campos_de_validacion(r: ResultadoValidacionXML) -> dict:
     return {
         'validacion_detalle': r.a_dict(),
         'integridad': r.integridad.resultado,
@@ -79,14 +79,22 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
         'codigo_seguridad': d.codigo_seguridad, 'razon_social_emisor': d.razon_social_emisor,
         'url_consulta': url, 'xml_contenido': xml_bytes, 'xml_hash_sha256': hash_nuevo,
         'qr_params': qr, 'origen': origen, 'referencia_origen': referencia_origen,
-        **campos_de_validacion(d, r),
+        **campos_de_validacion(r),
     }
 
-    nuevo_id = db.insert_comprobante({**campos, 'estado': PENDIENTE, **calendario_inicial(ahora, cfg)})
-    if nuevo_id is not None:
-        with db.transaccion():
+    with db.transaccion():
+        nuevo_id = db.insert_comprobante({**campos, 'estado': PENDIENTE, **calendario_inicial(ahora, cfg)})
+        if nuevo_id is not None:
             db.insert_historial(nuevo_id, REGISTRO, fecha=ahora)
+
+    if nuevo_id is not None:
+        # La consulta a la DGII va fuera de toda transacción.
+        try:
             resp = consultar(url)
+        except Exception as e:  # noqa: BLE001 - un fallo inesperado no debe perder el registro
+            logging.exception('Falla inesperada al consultar la DGII')
+            resp = RespuestaDGII('ERROR', detalle=repr(e))
+        with db.transaccion():
             fila = db.get_comprobante(d.rnc_emisor, d.encf)
             dec = decidir(fila, resp, ahora, cfg)
             db.update_comprobante(nuevo_id, {k: v for k, v in dec.campos.items() if k in _CAMPOS_PRIMERA_CONSULTA})
@@ -96,14 +104,29 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
     else:
         with db.transaccion():
             fila = db.get_comprobante(d.rnc_emisor, d.encf)
+            cid = fila['id']
+            if not any(h['tipo'] == REGISTRO for h in db.get_historial(cid)):
+                db.insert_historial(cid, REGISTRO, fecha=ahora)  # autocorrección de un registro incompleto
             if fila['xml_hash_sha256'] == hash_nuevo:
                 cambios = {c: campos[c] for c in _COLUMNAS_VALIDACION}
                 if qr:
                     cambios['qr_params'] = qr
-                db.update_comprobante(fila['id'], cambios)
-            else:
-                db.update_comprobante(fila['id'], campos)
+                db.update_comprobante(cid, cambios)
+            elif all(getattr(r, c).resultado == OK for c in ('integridad', 'vigencia', 'entidad_certificadora')):
+                cambios = {k: v for k, v in campos.items()
+                           if k not in ('origen', 'referencia_origen')
+                           and not (k in ('razon_social_emisor', 'qr_params') and v is None)}
+                cambios['estado'] = PENDIENTE
+                cambios['proxima_consulta'] = ahora
+                db.update_comprobante(cid, cambios)
+                if fila['estado'] != PENDIENTE:
+                    db.insert_historial(cid, CAMBIO_ESTADO, fila['estado'], PENDIENTE, fecha=ahora)
                 detalle = (f"hash anterior {fila['xml_hash_sha256'][:8]} → nuevo {hash_nuevo[:8]}; "
                            f"integridad={r.integridad.resultado}")
-                db.insert_historial(fila['id'], DOCUMENTO_REEMPLAZADO, detalle=detalle, fecha=ahora)
+                db.insert_historial(cid, DOCUMENTO_REEMPLAZADO, detalle=detalle, fecha=ahora)
+            else:
+                detalle = (f"hash nuevo {hash_nuevo[:8]}; integridad={r.integridad.resultado}; "
+                           f"vigencia={r.vigencia.resultado}; "
+                           f"entidad_certificadora={r.entidad_certificadora.resultado}")
+                db.insert_historial(cid, DOCUMENTO_RECHAZADO, detalle=detalle, fecha=ahora)
     return db.get_comprobante(d.rnc_emisor, d.encf)

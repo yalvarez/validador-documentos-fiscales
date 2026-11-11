@@ -3,13 +3,18 @@ from decimal import Decimal
 
 import pytest
 
-from ayudantes import (CONFIG_SIN_RED, DATOS_ACEPTADO, ERROR_R, MUESTRA_XML, QR_MUESTRA, T0, fijo)
+from cryptography.hazmat.primitives.serialization import Encoding
+
+from ayudantes import (CA_PRUEBA, HOJA_PRUEBA, HOJA_PRUEBA_KEY, XML_SIN_FIRMA, config_con, ecf_de_prueba,
+                       CONFIG_SIN_RED, DATOS_ACEPTADO, ERROR_R, MUESTRA_XML, QR_MUESTRA, T0, fijo)
 from common.ecf import registro
 from common.ecf.dgii import construir_url_consulta
 from common.ecf.lectura import ErrorLecturaECF, leer_ecf
-from common.ecf.modelos import (ACEPTADO, CAMBIO_ESTADO, CONSULTA, DOCUMENTO_REEMPLAZADO, ERROR_CONSULTA,
+from common.ecf.modelos import (ACEPTADO, CAMBIO_ESTADO, CONSULTA, DOCUMENTO_RECHAZADO, DOCUMENTO_REEMPLAZADO,
+                                ERROR_CONSULTA,
                                 FALLO, NO_VERIFICABLE, OK, PENDIENTE, REGISTRO)
 from common.ecf.registro import registrar_comprobante
+from pki import crear_ca, crear_hoja, firmar_ecf
 from common.ecf.seguimiento import ConfigSeguimiento
 
 
@@ -49,12 +54,65 @@ def test_reenvio_identico(db_pg):  # Foco 5
     assert DOCUMENTO_REEMPLAZADO not in tipos(db_pg, a['id'])
 
 
-def test_reenvio_distinto(db_pg):
+def test_reenvio_distinto_invalido_se_rechaza(db_pg):
     a = reg(db_pg); alterado = MUESTRA_XML.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
     b = reg(db_pg, alterado, ahora=T0 + timedelta(hours=1))
-    assert b['id'] == a['id'] and b['integridad'] == FALLO and b['proxima_consulta'] == a['proxima_consulta']
+    assert b['id'] == a['id'] and b['estado'] == ACEPTADO and b['monto_total'] == Decimal('1250')
+    assert bytes(b['xml_contenido']) == MUESTRA_XML and b['integridad'] == OK
+    assert b['proxima_consulta'] == a['proxima_consulta']
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
+
+
+def _confiando_en(ca, tmp_path):
+    (tmp_path / 'ca.pem').write_bytes(ca.public_bytes(Encoding.PEM))
+    return config_con(ca_dir=tmp_path)
+
+
+def test_reemplazo_firmado_por_ca_no_confiable_se_rechaza(db_pg, tmp_path):
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000007'), config_validacion=cfg)
+    assert a['entidad_certificadora'] == OK
+    ca_k, ca_c = crear_ca('CA ATACANTE')
+    hoja_k, hoja_c = crear_hoja(ca_k, ca_c, T0 - timedelta(days=30), T0 + timedelta(days=365))
+    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', b'<eNCF>E310000000007</eNCF>')
+    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>1</MontoTotal>')
+    b = reg(db_pg, firmar_ecf(xml, hoja_k, hoja_c, T0), config_validacion=cfg, ahora=T0 + timedelta(hours=1))
+    assert b['xml_hash_sha256'] == a['xml_hash_sha256'] and b['monto_total'] == a['monto_total']
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
+
+
+def test_reemplazo_aceptado(db_pg, tmp_path):
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000008'), config_validacion=cfg, origen='email', referencia_origen='m1')
+    assert a['estado'] == ACEPTADO
+    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', b'<eNCF>E310000000008</eNCF>')
+    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    ahora = T0 + timedelta(hours=1)
+    b = reg(db_pg, firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0), config_validacion=cfg, ahora=ahora,
+            origen='api', referencia_origen='otro')
+    assert b['id'] == a['id'] and b['estado'] == PENDIENTE and b['proxima_consulta'] == ahora
     assert b['monto_total'] == Decimal('9250') and 'MontoTotal=9250.00' in b['url_consulta']
-    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_REEMPLAZADO
+    assert b['seguimiento_hasta'] == a['seguimiento_hasta'] and b['intentos'] == a['intentos']
+    assert b['intervalo_actual_min'] == a['intervalo_actual_min']
+    assert (b['origen'], b['referencia_origen']) == ('email', 'm1')
+    assert b['razon_social_emisor'] == a['razon_social_emisor']
+    assert tipos(db_pg, a['id'])[-2:] == [CAMBIO_ESTADO, DOCUMENTO_REEMPLAZADO]
+
+
+def test_consultar_lanza_conserva_registro(db_pg):
+    def falla(url): raise RuntimeError('boom')
+    c = reg(db_pg, consultar=falla)
+    assert c['estado'] == PENDIENTE and tipos(db_pg, c['id']) == [REGISTRO, ERROR_CONSULTA]
+    assert 'boom' in db_pg.get_historial(c['id'])[-1]['detalle']
+    reg(db_pg, consultar=falla)
+    assert tipos(db_pg, c['id']) == [REGISTRO, ERROR_CONSULTA]
+
+
+def test_reenvio_autocorrige_registro_faltante(db_pg):
+    c = reg(db_pg)
+    db_pg.execute("DELETE FROM comprobante_historial WHERE tipo = 'REGISTRO'")
+    reg(db_pg)
+    assert REGISTRO in tipos(db_pg, c['id'])
 
 
 def test_normaliza_identificacion(db_pg):  # Foco 3
