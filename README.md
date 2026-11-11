@@ -126,7 +126,7 @@ El motor y la conexión se leen de variables de entorno (por defecto `sqlite` y 
 
 - `DB_ENGINE`: `sqlite` (por defecto), `postgres`, etc. El endpoint nuevo y el seguimiento exigen `postgres`.
 - `DB_CONNECTION_STRING`: por ejemplo `postgresql://validador:CLAVE@postgres:5432/validador`.
-- `POSTGRES_PASSWORD`: clave del servicio `postgres` de `docker-compose.yml`; se define en el archivo `.env` (ver `.env.example`).
+- `POSTGRES_PASSWORD`: clave del servicio `postgres` de `docker-compose.yml`; se define en el archivo `.env` (ver `.env.example`). Como `docker-compose.yml` la inserta sin codificar en `DB_CONNECTION_STRING`, debe usar solo letras, dígitos, `-`, `_` y `.` (caracteres como `@`, `:`, `/`, `?`, `#` o `%` rompen la URL de conexión).
 
 Con PostgreSQL, la bitácora `facturas` de los endpoints existentes (`/validar-factura-*`) también vive en Postgres.
 
