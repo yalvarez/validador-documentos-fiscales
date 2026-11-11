@@ -146,3 +146,33 @@ def test_dtd_sin_entidades_rechazado():
     with _p.raises(ErrorLecturaECF, match='DTD o entidades'):
         leer_ecf(doc)
     assert verificar_integridad(doc).resultado == FALLO
+
+
+def _con_transform_extra(algoritmo: str) -> bytes:
+    """e-CF de prueba con un Transform adicional en la Reference y el SignedInfo vuelto a firmar."""
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from lxml import etree
+    from ayudantes import HOJA_PRUEBA_KEY
+    raiz = etree.fromstring(ecf_de_prueba('E310000000001'))
+    transforms = raiz.xpath('ds:Signature/ds:SignedInfo/ds:Reference/ds:Transforms', namespaces=NS)[0]
+    etree.SubElement(transforms, '{%s}Transform' % NS['ds']).set('Algorithm', algoritmo)
+    signed_info = raiz.xpath('ds:Signature/ds:SignedInfo', namespaces=NS)[0]
+    c14n = etree.tostring(etree.fromstring(etree.tostring(signed_info)), method='c14n')
+    firma = HOJA_PRUEBA_KEY.sign(c14n, padding.PKCS1v15(), hashes.SHA256())
+    raiz.xpath('ds:Signature/ds:SignatureValue', namespaces=NS)[0].text = base64.b64encode(firma).decode()
+    return etree.tostring(raiz)
+
+
+@pytest.mark.parametrize('algoritmo', ['urn:transform:desconocido',
+                                       'http://www.w3.org/2000/09/xmldsig#base64',
+                                       'http://www.w3.org/TR/1999/REC-xpath-19991116'])
+def test_transform_no_permitido_es_fallo(algoritmo):
+    r = verificar_integridad(_con_transform_extra(algoritmo))
+    assert r.resultado == FALLO and 'Transform no permitido' in r.detalle
+
+
+def test_transform_c14n_exclusivo_permitido():
+    r = verificar_integridad(_con_transform_extra('http://www.w3.org/2001/10/xml-exc-c14n#'))
+    assert 'Transform no permitido' not in r.detalle

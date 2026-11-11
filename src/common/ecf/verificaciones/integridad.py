@@ -7,6 +7,18 @@ from common.ecf.modelos import FALLO, OK, Verificacion
 
 NS_DSIG = 'http://www.w3.org/2000/09/xmldsig#'
 
+# Únicos Transforms admitidos en la Reference (signxml ignora en silencio los desconocidos
+# y aplica otros como xmldsig#base64, que cambian lo que la firma cubre).
+TRANSFORMS_PERMITIDOS = frozenset({
+    'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+    'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
+    'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments',
+    'http://www.w3.org/2006/12/xml-c14n11',
+    'http://www.w3.org/2006/12/xml-c14n11#WithComments',
+    'http://www.w3.org/2001/10/xml-exc-c14n#',
+    'http://www.w3.org/2001/10/xml-exc-c14n#WithComments',
+})
+
 
 def verificar_integridad(xml_bytes: bytes, certificado_der: bytes | None = None) -> Verificacion:
     """Verifica la firma XMLDSig del e-CF contra el certificado firmante incrustado.
@@ -32,6 +44,9 @@ def verificar_integridad(xml_bytes: bytes, certificado_der: bytes | None = None)
         if uris != ['']:
             return Verificacion(
                 FALLO, f'La firma no cubre el documento completo (Reference URI={uris})')
+        for t in referencias[0].xpath('ds:Transforms/ds:Transform', namespaces=ns):
+            if t.get('Algorithm') not in TRANSFORMS_PERMITIDOS:
+                return Verificacion(FALLO, f"Transform no permitido: {t.get('Algorithm')}")
         certs = certificados_keyinfo(raiz)
         if not certs:
             return Verificacion(FALLO, 'Sin certificado incrustado válido')
