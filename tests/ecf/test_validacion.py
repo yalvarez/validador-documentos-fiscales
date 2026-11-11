@@ -1,6 +1,7 @@
 import dataclasses
 
 import pytest
+import requests
 from cryptography.hazmat.primitives.serialization import Encoding
 
 import common.ecf.validacion as validacion
@@ -114,12 +115,22 @@ class _Requests:
         self.llamadas, self.cuerpo = [], cuerpo
         self.status_code, self.trozos_lentos = status_code, trozos_lentos
 
-    def get(self, url, **kw):
-        self.llamadas.append(('get', url, kw))
-        return _Resp(self.cuerpo, self.status_code, self.trozos_lentos)
+    Request = requests.Request  # solo prepara la petición, sin red
 
-    def post(self, url, **kw):
-        self.llamadas.append(('post', url, kw))
+    def Session(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def close(self):
+        pass
+
+    def send(self, prepared, **kw):
+        self.llamadas.append((prepared.method.lower(), prepared.url, {**kw, 'prepared': prepared}))
         return _Resp(self.cuerpo, self.status_code, self.trozos_lentos)
 
 
@@ -154,8 +165,8 @@ def test_http_ocsp_post_cabecera_timeout_y_tope(monkeypatch):
     monkeypatch.setattr(validacion, 'requests', falso)
     assert http_ocsp_post('http://ocsp.x/o', b'req') == b'resp'
     kw = falso.llamadas[0][2]
-    assert kw['headers'] == {'Content-Type': 'application/ocsp-request'}
-    assert kw['timeout'] == 5 and kw['data'] == b'req'
+    assert kw['prepared'].headers['Content-Type'] == 'application/ocsp-request'
+    assert kw['timeout'] == 5 and kw['prepared'].body == b'req'
     monkeypatch.setattr(validacion, 'requests', _Requests(b'a' * (64 * 1024 + 1)))
     with pytest.raises(ValueError):
         http_ocsp_post('http://ocsp.x/o', b'req')
@@ -242,3 +253,29 @@ def test_validar_xml_degrada_al_superar_tope_de_descargas(tmp_path):
     r = validar_xml(ecf_de_prueba('E310000000002'), None, cfg, ahora=T0)
     assert r.revocacion.resultado == NO_VERIFICABLE
     assert len(veces) <= validacion.MAX_FETCHES
+
+
+@pytest.mark.parametrize('url', [
+    'http://127.0.0.1\\@example.com/x', 'http://evil@127.0.0.1/', 'http://user:pw@example.com/x',
+    'http://example.com/a b', 'http://example.com/a\tb', 'http://example.com/\x00', 'http://exámple.com/x',
+    'http://example.com/\n'])
+def test_http_rechaza_urls_ambiguas(monkeypatch, url):
+    falso = _Requests()
+    monkeypatch.setattr(validacion, 'requests', falso)
+    with pytest.raises(ValueError, match='URL no permitida'):
+        http_descargar(url)
+    with pytest.raises(ValueError, match='URL no permitida'):
+        http_ocsp_post(url, b'x')
+    assert falso.llamadas == []
+
+
+def test_http_comprueba_el_host_de_la_peticion_preparada(monkeypatch):
+    """Lo comprobado y lo conectado es el mismo objeto: si el host preparado es privado, no se envía."""
+    falso = _Requests()
+    monkeypatch.setattr(validacion, 'requests', falso)
+    monkeypatch.setattr(validacion, '_resolver', lambda h, p: ['10.0.0.1'] if h == 'interno.x' else [PUBLICA])
+    with pytest.raises(ValueError, match='Destino no permitido'):
+        http_descargar('http://interno.x/a')
+    assert falso.llamadas == []
+    assert http_descargar('http://publico.x/a') == b'ok'
+    assert falso.llamadas[0][1] == 'http://publico.x/a'

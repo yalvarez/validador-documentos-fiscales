@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
 
 import requests
+from urllib3.util import parse_url
 
 import common.ecf as _paquete
 from common.ecf.lectura import leer_ecf
@@ -50,15 +50,25 @@ def _ip_permitida(texto: str) -> bool:
                                  or ip.is_private or ip.is_reserved or ip.is_unspecified)
 
 
-def _validar_url(url: str) -> None:
-    """Solo http/https hacia destinos públicos: las URL vienen de certificados del XML recibido."""
+def _validar_url(url: str) -> str:
+    """Solo http/https hacia destinos públicos: las URL vienen de certificados del XML recibido.
+
+    Devuelve el host comprobado. Se comprueba el host de la URL tal como la entenderá urllib3.
+    """
     if not isinstance(url, str) or not url.lower().startswith(('http://', 'https://')):
         raise ValueError(f'Solo se permiten URL http/https: {url!r}')
-    partes = urlparse(url)
+    if any(ord(c) < 0x21 or ord(c) >= 0x7f or c == chr(92) for c in url):
+        raise ValueError(f'URL no permitida: {url!r}')
+    try:
+        partes = parse_url(url)
+    except Exception as e:
+        raise ValueError(f'URL no permitida: {url!r}') from e
+    if partes.auth or '@' in (partes.netloc or ''):
+        raise ValueError(f'URL no permitida: {url!r}')
     host = (partes.hostname or '').rstrip('.').lower()
     if not host:
         raise ValueError(f'URL sin host: {url!r}')
-    puerto = partes.port or (443 if partes.scheme.lower() == 'https' else 80)
+    puerto = partes.port or (443 if (partes.scheme or '').lower() == 'https' else 80)
     try:
         ipaddress.ip_address(host)
         direcciones = [host]
@@ -69,6 +79,18 @@ def _validar_url(url: str) -> None:
             raise ValueError(f'No se pudo resolver {host}: {e}') from e
     if not direcciones or not all(_ip_permitida(d) for d in direcciones):
         raise ValueError(f'Destino no permitido: {host}')
+    return host
+
+
+def _enviar(metodo: str, url: str, maximo: int, **kw) -> bytes:
+    """Prepara la petición, comprueba el destino de la URL ya preparada y envía ese mismo objeto."""
+    _validar_url(url)
+    inicio = _reloj()
+    preparada = requests.Request(metodo, url, **kw).prepare()
+    _validar_url(preparada.url)
+    with requests.Session() as sesion:
+        resp = sesion.send(preparada, allow_redirects=False, timeout=TIMEOUT_HTTP, stream=True)
+        return _leer_acotado(resp, maximo, inicio)
 
 
 def _leer_acotado(resp, maximo: int, inicio: float) -> bytes:
@@ -91,18 +113,11 @@ def _leer_acotado(resp, maximo: int, inicio: float) -> bytes:
 
 
 def http_descargar(url: str) -> bytes:
-    _validar_url(url)
-    inicio = _reloj()
-    return _leer_acotado(requests.get(url, timeout=TIMEOUT_HTTP, stream=True, allow_redirects=False),
-                         MAX_DESCARGA, inicio)
+    return _enviar('GET', url, MAX_DESCARGA)
 
 
 def http_ocsp_post(url: str, cuerpo: bytes) -> bytes:
-    _validar_url(url)
-    inicio = _reloj()
-    resp = requests.post(url, data=cuerpo, headers={'Content-Type': 'application/ocsp-request'},
-                         timeout=TIMEOUT_HTTP, stream=True, allow_redirects=False)
-    return _leer_acotado(resp, MAX_OCSP, inicio)
+    return _enviar('POST', url, MAX_OCSP, data=cuerpo, headers={'Content-Type': 'application/ocsp-request'})
 
 
 @dataclass
