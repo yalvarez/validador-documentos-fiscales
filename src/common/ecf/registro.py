@@ -53,6 +53,22 @@ def campos_de_validacion(r: ResultadoValidacionXML) -> dict:
     }
 
 
+def _consultar_y_aplicar(db, cid, d, url, consultar, ahora, cfg) -> None:
+    """Consulta la DGII fuera de toda transacción y aplica el resultado (sin tocar el calendario)."""
+    try:
+        resp = consultar(url)
+    except Exception as e:  # noqa: BLE001 - un fallo inesperado no debe perder el registro
+        logging.exception('Falla inesperada al consultar la DGII')
+        resp = RespuestaDGII('ERROR', detalle=repr(e))
+    with db.transaccion():
+        fila = db.get_comprobante(d.rnc_emisor, d.encf)
+        dec = decidir(fila, resp, ahora, cfg)
+        db.update_comprobante(cid, {k: v for k, v in dec.campos.items() if k in _CAMPOS_PRIMERA_CONSULTA})
+        for e in dec.eventos:
+            db.insert_historial(cid, e.tipo, e.estado_anterior, e.estado_nuevo,
+                                e.estado_dgii_texto, e.detalle, fecha=ahora)
+
+
 def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, origen: str = 'api',
                           referencia_origen: str | None = None, *,
                           config_validacion: ConfigValidacion | None = None,
@@ -88,20 +104,9 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
             db.insert_historial(nuevo_id, REGISTRO, fecha=ahora)
 
     if nuevo_id is not None:
-        # La consulta a la DGII va fuera de toda transacción.
-        try:
-            resp = consultar(url)
-        except Exception as e:  # noqa: BLE001 - un fallo inesperado no debe perder el registro
-            logging.exception('Falla inesperada al consultar la DGII')
-            resp = RespuestaDGII('ERROR', detalle=repr(e))
-        with db.transaccion():
-            fila = db.get_comprobante(d.rnc_emisor, d.encf)
-            dec = decidir(fila, resp, ahora, cfg)
-            db.update_comprobante(nuevo_id, {k: v for k, v in dec.campos.items() if k in _CAMPOS_PRIMERA_CONSULTA})
-            for e in dec.eventos:
-                db.insert_historial(nuevo_id, e.tipo, e.estado_anterior, e.estado_nuevo,
-                                    e.estado_dgii_texto, e.detalle, fecha=ahora)
+        _consultar_y_aplicar(db, nuevo_id, d, url, consultar, ahora, cfg)
     else:
+        reemplazado = False
         with db.transaccion():
             fila = db.get_comprobante(d.rnc_emisor, d.encf)
             cid = fila['id']
@@ -117,16 +122,20 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
                            if k not in ('origen', 'referencia_origen')
                            and not (k in ('razon_social_emisor', 'qr_params') and v is None)}
                 cambios['estado'] = PENDIENTE
-                cambios['proxima_consulta'] = ahora
+                if fila['seguimiento_activo']:
+                    cambios['proxima_consulta'] = ahora
                 db.update_comprobante(cid, cambios)
                 if fila['estado'] != PENDIENTE:
                     db.insert_historial(cid, CAMBIO_ESTADO, fila['estado'], PENDIENTE, fecha=ahora)
                 detalle = (f"hash anterior {fila['xml_hash_sha256'][:8]} → nuevo {hash_nuevo[:8]}; "
                            f"integridad={r.integridad.resultado}")
                 db.insert_historial(cid, DOCUMENTO_REEMPLAZADO, detalle=detalle, fecha=ahora)
+                reemplazado = True
             else:
                 detalle = (f"hash nuevo {hash_nuevo[:8]}; integridad={r.integridad.resultado}; "
                            f"vigencia={r.vigencia.resultado}; "
                            f"entidad_certificadora={r.entidad_certificadora.resultado}")
                 db.insert_historial(cid, DOCUMENTO_RECHAZADO, detalle=detalle, fecha=ahora)
+        if reemplazado:
+            _consultar_y_aplicar(db, cid, d, url, consultar, ahora, cfg)
     return db.get_comprobante(d.rnc_emisor, d.encf)

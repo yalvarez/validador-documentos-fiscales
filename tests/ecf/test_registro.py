@@ -12,7 +12,8 @@ from common.ecf.dgii import construir_url_consulta
 from common.ecf.lectura import ErrorLecturaECF, leer_ecf
 from common.ecf.modelos import (ACEPTADO, CAMBIO_ESTADO, CONSULTA, DOCUMENTO_RECHAZADO, DOCUMENTO_REEMPLAZADO,
                                 ERROR_CONSULTA,
-                                FALLO, NO_VERIFICABLE, OK, PENDIENTE, REGISTRO)
+                                FALLO, NO_VERIFICABLE, OK, PENDIENTE, RECHAZADO, REGISTRO)
+from common.ecf.dgii import RespuestaDGII
 from common.ecf.registro import registrar_comprobante
 from pki import crear_ca, crear_hoja, firmar_ecf
 from common.ecf.seguimiento import ConfigSeguimiento
@@ -90,13 +91,25 @@ def test_reemplazo_aceptado(db_pg, tmp_path):
     ahora = T0 + timedelta(hours=1)
     b = reg(db_pg, firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0), config_validacion=cfg, ahora=ahora,
             origen='api', referencia_origen='otro')
-    assert b['id'] == a['id'] and b['estado'] == PENDIENTE and b['proxima_consulta'] == ahora
+    assert b['id'] == a['id'] and b['estado'] == ACEPTADO and b['proxima_consulta'] == ahora
     assert b['monto_total'] == Decimal('9250') and 'MontoTotal=9250.00' in b['url_consulta']
-    assert b['seguimiento_hasta'] == a['seguimiento_hasta'] and b['intentos'] == a['intentos']
+    assert b['seguimiento_hasta'] == a['seguimiento_hasta'] and b['intentos'] == a['intentos'] + 1
     assert b['intervalo_actual_min'] == a['intervalo_actual_min']
     assert (b['origen'], b['referencia_origen']) == ('email', 'm1')
     assert b['razon_social_emisor'] == a['razon_social_emisor']
-    assert tipos(db_pg, a['id'])[-2:] == [CAMBIO_ESTADO, DOCUMENTO_REEMPLAZADO]
+    assert tipos(db_pg, a['id'])[-4:] == [CAMBIO_ESTADO, DOCUMENTO_REEMPLAZADO, CONSULTA, CAMBIO_ESTADO]
+
+
+def test_reemplazo_aceptado_con_seguimiento_inactivo(db_pg, tmp_path):
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000009'), config_validacion=cfg)
+    db_pg.update_comprobante(a['id'], {'seguimiento_activo': False})
+    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', b'<eNCF>E310000000009</eNCF>')
+    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    b = reg(db_pg, firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0), config_validacion=cfg,
+            ahora=T0 + timedelta(hours=1), consultar=fijo(RespuestaDGII('DATOS', 'Rechazado')))
+    assert b['estado'] == RECHAZADO and b['seguimiento_activo'] is False
+    assert b['proxima_consulta'] == a['proxima_consulta'] and b['seguimiento_hasta'] == a['seguimiento_hasta']
 
 
 def test_consultar_lanza_conserva_registro(db_pg):
