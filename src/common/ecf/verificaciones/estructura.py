@@ -27,7 +27,10 @@ def _declara_firma(doc) -> bool:
             return True
     if raiz.get('targetNamespace') == NS_DSIG:
         return bool(doc.xpath('/xs:schema/xs:element[@name="Signature"]', namespaces=_NS_XSD))
-    return False
+    # XSD oficiales de la DGII: la firma ocupa un <xs:any> obligatorio al final de la secuencia de ECF.
+    ultimo = doc.xpath('/xs:schema/xs:element[@name="ECF"]/xs:complexType/xs:sequence/*[last()]',
+                       namespaces=_NS_XSD)
+    return bool(ultimo) and ultimo[0].tag == '{%s}any' % _NS_XSD['xs']
 
 
 def _revisar_referencias(ruta: Path, base: Path, visitados: set[Path]) -> None:
@@ -97,10 +100,11 @@ def verificar_estructura(xml_bytes: bytes, tipo_ecf: str | None, xsd_dir: Path =
         raiz = parsear_ecf(xml_bytes)
     except ErrorLecturaECF as e:
         return Verificacion(FALLO, str(e))
+    sin_firma = _sin_firma(raiz)
+    if sin_firma is None:
+        return Verificacion(FALLO, 'Firma en posición no permitida')
     if not declara_firma:
-        raiz = _sin_firma(raiz)
-        if raiz is None:
-            return Verificacion(FALLO, 'Firma en posición no permitida')
+        raiz = sin_firma
     if esquema.validate(raiz):
         return Verificacion(OK, f'Cumple la XSD del e-CF tipo {tipo_ecf}')
     errores = '; '.join(f'línea {e.line}: {e.message}' for e in esquema.error_log)
