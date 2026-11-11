@@ -98,6 +98,7 @@ def test_crl_sin_next_update_cache_una_hora(monkeypatch):
         def __init__(self, c): self._c = c
         next_update_utc = None
         def __getattr__(self, n): return getattr(self._c, n)
+        def __iter__(self): return iter(self._c)
     monkeypatch.setattr(rev, '_cargar_crl', lambda datos: SinNext(real(datos)))
     llamadas = []
     def d(u): llamadas.append(u); return firmar_crl(ca_k, ca, {}, T0 + timedelta(days=4))
@@ -106,3 +107,23 @@ def test_crl_sin_next_update_cache_una_hora(monkeypatch):
     assert len(llamadas) == 1
     verificar_revocacion(hoja, ca, FIRMA, lanza, d, T0 + timedelta(minutes=61))
     assert len(llamadas) == 2
+
+
+# --- ronda 2: CRL con alcance restringido ---
+URL_CRL = 'http://crl.prueba/a.crl'
+def _idp(**campos): return _crl_de({}, idp=campos)
+
+def test_crl_solo_de_ca_no_se_acepta():
+    assert revisar(descargar=_idp(only_contains_ca_certs=True)).resultado == NO_VERIFICABLE
+def test_crl_indirecta_no_se_acepta():
+    assert revisar(descargar=_idp(indirect_crl=True)).resultado == NO_VERIFICABLE
+def test_crl_solo_de_atributos_no_se_acepta():
+    assert revisar(descargar=_idp(only_contains_attribute_certs=True)).resultado == NO_VERIFICABLE
+def test_crl_solo_algunas_razones_no_se_acepta():
+    assert revisar(descargar=_idp(only_some_reasons=frozenset([RF.key_compromise]))).resultado == NO_VERIFICABLE
+def test_crl_idp_de_otra_url_no_se_acepta():
+    f = [x509.UniformResourceIdentifier('http://otra.prueba/b.crl')]
+    assert revisar(descargar=_idp(full_name=f)).resultado == NO_VERIFICABLE
+def test_crl_idp_de_la_misma_url_se_acepta():
+    f = [x509.UniformResourceIdentifier(URL_CRL)]
+    assert revisar(descargar=_idp(full_name=f)).detalle == 'CRL: no revocado'

@@ -166,7 +166,8 @@ def responder_ocsp(firmante_key, firmante_cert, hoja, estado: str,
 
 
 def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: datetime | None,
-               razones: dict | None = None, pem: bool = False, last_update: datetime | None = None) -> bytes:
+               razones: dict | None = None, pem: bool = False, last_update: datetime | None = None,
+               idp: dict | None = None) -> bytes:
     """CRL en DER con los `revocados` ({serie: fecha})."""
     ahora = _REFERENCIA
     b = (x509.CertificateRevocationListBuilder()
@@ -174,6 +175,12 @@ def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: dateti
          .last_update(last_update or ahora - timedelta(hours=1)))
     if next_update is not None:
         b = b.next_update(next_update)
+    if idp is not None:
+        campos = dict(full_name=None, relative_name=None, only_contains_user_certs=False,
+                      only_contains_ca_certs=False, only_some_reasons=None, indirect_crl=False,
+                      only_contains_attribute_certs=False)
+        campos.update(idp)
+        b = b.add_extension(x509.IssuingDistributionPoint(**campos), critical=True)
     for serie, fecha in revocados.items():
         rb = x509.RevokedCertificateBuilder().serial_number(serie).revocation_date(fecha)
         if razones and serie in razones:

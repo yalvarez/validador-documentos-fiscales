@@ -13,13 +13,16 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509 import ocsp
-from cryptography.x509.oid import ExtendedKeyUsageOID
+from cryptography.x509.oid import CRLEntryExtensionOID, ExtendedKeyUsageOID, ExtensionOID
 
 from common.ecf.modelos import FALLO, NO_VERIFICABLE, OK, Verificacion
 
 log = logging.getLogger(__name__)
 
 _TOLERANCIA = timedelta(minutes=5)
+_CRITICAS_CRL = (ExtensionOID.ISSUING_DISTRIBUTION_POINT, ExtensionOID.CRL_NUMBER,
+                ExtensionOID.AUTHORITY_KEY_IDENTIFIER)
+_CRITICAS_ENTRADA = (CRLEntryExtensionOID.CRL_REASON, CRLEntryExtensionOID.INVALIDITY_DATE)
 _COMPROMISO = (x509.ReasonFlags.key_compromise, x509.ReasonFlags.ca_compromise)
 
 # url -> (crl, vigente_hasta, huella_del_emisor)
@@ -142,6 +145,26 @@ def _cargar_crl(datos: bytes) -> x509.CertificateRevocationList:
         return x509.load_pem_x509_crl(datos)
 
 
+def _crl_aceptable(crl, url: str) -> bool:
+    """Rechaza CRL delta, parciales/con alcance distinto al del certificado y con extensiones críticas ignoradas."""
+    for ext in crl.extensions:
+        if ext.oid == ExtensionOID.ISSUING_DISTRIBUTION_POINT:
+            idp = ext.value
+            if (idp.only_contains_ca_certs or idp.only_contains_attribute_certs or idp.indirect_crl
+                    or idp.only_some_reasons):
+                return False
+            if idp.full_name is not None and url not in [
+                    n.value for n in idp.full_name if isinstance(n, x509.UniformResourceIdentifier)]:
+                return False
+        elif ext.critical and ext.oid not in _CRITICAS_CRL:
+            return False  # incluye DeltaCRLIndicator
+    for entrada in crl:
+        for ext in entrada.extensions:
+            if ext.critical and ext.oid not in _CRITICAS_ENTRADA:
+                return False
+    return True
+
+
 def _crl_de(url, emisor, descargar, ahora) -> x509.CertificateRevocationList | None:
     en_cache = _CACHE_CRL.get(url)
     if en_cache and ahora < en_cache[1] and en_cache[2] == _huella(emisor):
@@ -153,11 +176,8 @@ def _crl_de(url, emisor, descargar, ahora) -> x509.CertificateRevocationList | N
         return None
     if crl.next_update_utc is not None and crl.next_update_utc < ahora:
         return None
-    try:
-        crl.extensions.get_extension_for_class(x509.DeltaCRLIndicator)
+    if not _crl_aceptable(crl, url):
         return None
-    except x509.ExtensionNotFound:
-        pass
     hasta = crl.next_update_utc.astimezone(ahora.tzinfo) if crl.next_update_utc else ahora + timedelta(hours=1)
     _CACHE_CRL[url] = (crl, hasta, _huella(emisor))
     return crl
