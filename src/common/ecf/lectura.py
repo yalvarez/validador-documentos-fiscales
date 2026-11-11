@@ -17,6 +17,19 @@ def normalizar_xml_bytes(b: bytes) -> bytes:
     return b.removeprefix(b'\xef\xbb\xbf').strip()
 
 
+def parsear_ecf(xml_bytes: bytes):
+    """Parsea el XML (bytes normalizados); rechaza DTD y entidades. Devuelve la raíz."""
+    try:
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+        raiz = etree.fromstring(normalizar_xml_bytes(xml_bytes), parser)
+    except (etree.XMLSyntaxError, ValueError) as e:
+        raise ErrorLecturaECF(f'XML mal formado: {e}') from e
+    info = raiz.getroottree().docinfo
+    if info.doctype or info.internalDTD is not None or any(True for _ in raiz.iter(etree.Entity)):
+        raise ErrorLecturaECF('El XML contiene DTD o entidades, no permitido')
+    return raiz
+
+
 @dataclass
 class DatosECF:
     rnc_emisor: str
@@ -53,11 +66,7 @@ def _texto(raiz, nombre: str) -> str | None:
 
 
 def leer_ecf(xml_bytes: bytes) -> DatosECF:
-    try:
-        parser = etree.XMLParser(resolve_entities=False, no_network=True)
-        raiz = etree.fromstring(normalizar_xml_bytes(xml_bytes), parser)
-    except (etree.XMLSyntaxError, ValueError) as e:
-        raise ErrorLecturaECF(f'XML mal formado: {e}') from e
+    raiz = parsear_ecf(xml_bytes)
 
     rnc = _texto(raiz, 'RNCEmisor')
     encf = _texto(raiz, 'eNCF')

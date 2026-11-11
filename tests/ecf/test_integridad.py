@@ -120,3 +120,29 @@ def test_comentarios_en_campos_no_truncan_la_lectura():
     assert verificar_integridad(alterado).resultado == OK  # los comentarios no los cubre la firma
     d = leer_ecf(alterado)
     assert d.monto_total == Decimal('1250') and d.encf == 'E310000000001'
+
+
+def _con_doctype(xml: bytes, doctype: bytes) -> bytes:
+    return doctype + b'\n' + xml
+
+
+def test_dtd_con_entidad_rechazado():
+    import pytest as _p
+    from common.ecf.lectura import ErrorLecturaECF, leer_ecf
+    xml = ecf_de_prueba('E310000000001')
+    alterado = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>1&x;250</MontoTotal>')
+    assert alterado != xml
+    doc = _con_doctype(alterado, b'<!DOCTYPE ECF [<!ENTITY x "9">]>')
+    with _p.raises(ErrorLecturaECF, match='DTD o entidades'):
+        leer_ecf(doc)
+    r = verificar_integridad(doc)
+    assert r.resultado == FALLO and 'DTD o entidades' in r.detalle
+
+
+def test_dtd_sin_entidades_rechazado():
+    import pytest as _p
+    from common.ecf.lectura import ErrorLecturaECF, leer_ecf
+    doc = _con_doctype(ecf_de_prueba('E310000000001'), b'<!DOCTYPE ECF>')
+    with _p.raises(ErrorLecturaECF, match='DTD o entidades'):
+        leer_ecf(doc)
+    assert verificar_integridad(doc).resultado == FALLO

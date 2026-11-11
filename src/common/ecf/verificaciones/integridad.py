@@ -3,7 +3,7 @@ import base64
 from lxml import etree
 from signxml import XMLVerifier
 
-from common.ecf.lectura import normalizar_xml_bytes, texto_completo
+from common.ecf.lectura import ErrorLecturaECF, normalizar_xml_bytes, parsear_ecf, texto_completo
 from common.ecf.modelos import FALLO, OK, Verificacion
 
 NS_DSIG = 'http://www.w3.org/2000/09/xmldsig#'
@@ -16,7 +16,10 @@ def verificar_integridad(xml_bytes: bytes) -> Verificacion:
     """
     try:
         xml = normalizar_xml_bytes(xml_bytes)
-        raiz = etree.fromstring(xml)
+        try:
+            raiz = parsear_ecf(xml)
+        except ErrorLecturaECF as e:
+            return Verificacion(FALLO, str(e))
         ns = {'ds': NS_DSIG}
         if len(raiz.xpath('//ds:Signature', namespaces=ns)) != 1:
             return Verificacion(FALLO, 'Debe haber exactamente una firma en el documento')
