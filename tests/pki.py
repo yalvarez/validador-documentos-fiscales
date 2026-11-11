@@ -5,7 +5,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
+from cryptography.x509 import ocsp
+from cryptography.x509.oid import AuthorityInformationAccessOID, ExtendedKeyUsageOID, NameOID
 from lxml import etree
 from signxml import XMLSigner, methods
 
@@ -118,3 +119,58 @@ def crear_subordinado(emisor_key, emisor_cert, nombre, es_ca=True, path_length=N
                       not_before or _INICIO, not_after or _FIN, es_ca, emisor_cert.public_key(),
                       path_length=path_length, key_cert_sign=key_cert_sign)
     return key, cert
+
+
+def crear_delegado_ocsp(emisor_key, emisor_cert, con_eku: bool = True, nombre: str = 'RESPONDEDOR OCSP'):
+    """Certificado de firma de respuestas OCSP emitido por `emisor` (EKU OCSPSigning si `con_eku`)."""
+    key = _clave()
+    b = (x509.CertificateBuilder()
+         .subject_name(_nombre(nombre, 'CA PRUEBA', 'OCSP'))
+         .issuer_name(emisor_cert.subject).public_key(key.public_key())
+         .serial_number(x509.random_serial_number())
+         .not_valid_before(_INICIO).not_valid_after(_FIN)
+         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True))
+    if con_eku:
+        b = b.add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.OCSP_SIGNING]), critical=False)
+    return key, b.sign(emisor_key, hashes.SHA256())
+
+
+def _clonar_con_serie(cert, serie: int, firmante_key):
+    return (x509.CertificateBuilder()
+            .subject_name(cert.subject).issuer_name(cert.issuer)
+            .public_key(cert.public_key()).serial_number(serie)
+            .not_valid_before(cert.not_valid_before_utc).not_valid_after(cert.not_valid_after_utc)
+            .sign(firmante_key, hashes.SHA256()))
+
+
+def responder_ocsp(firmante_key, firmante_cert, hoja, estado: str,
+                   revocado_en: datetime | None = None, serie: int | None = None,
+                   emisor=None, incluir_certificados=()) -> bytes:
+    """Respuesta OCSP SUCCESSFUL para `hoja`, firmada con `firmante_key`, en DER."""
+    emisor = emisor or firmante_cert
+    objetivo = _clonar_con_serie(hoja, serie, firmante_key) if serie is not None else hoja
+    ahora = datetime.now(ZONA_RD)
+    b = ocsp.OCSPResponseBuilder().add_response(
+        cert=objetivo, issuer=emisor, algorithm=hashes.SHA1(),
+        cert_status=getattr(ocsp.OCSPCertStatus, estado),
+        this_update=ahora - timedelta(minutes=1), next_update=ahora + timedelta(days=1),
+        revocation_time=revocado_en if estado == 'REVOKED' else None,
+        revocation_reason=None)
+    b = b.responder_id(ocsp.OCSPResponderEncoding.HASH, firmante_cert)
+    if incluir_certificados:
+        b = b.certificates(list(incluir_certificados))
+    return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.DER)
+
+
+def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: datetime | None) -> bytes:
+    """CRL en DER con los `revocados` ({serie: fecha})."""
+    ahora = datetime.now(ZONA_RD)
+    b = (x509.CertificateRevocationListBuilder()
+         .issuer_name(firmante_cert.subject)
+         .last_update(ahora - timedelta(hours=1)))
+    if next_update is not None:
+        b = b.next_update(next_update)
+    for serie, fecha in revocados.items():
+        b = b.add_revoked_certificate(x509.RevokedCertificateBuilder()
+                                      .serial_number(serie).revocation_date(fecha).build())
+    return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.DER)
