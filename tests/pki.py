@@ -16,6 +16,7 @@ _NS_DSIG = 'http://www.w3.org/2000/09/xmldsig#'
 _C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
 _INICIO = datetime(2020, 1, 1, tzinfo=ZONA_RD)
 _FIN = datetime(2040, 1, 1, tzinfo=ZONA_RD)
+_REFERENCIA = datetime(2026, 11, 10, 10, 0, tzinfo=ZONA_RD)  # = T0 de ayudantes; ancla de las respuestas OCSP/CRL
 
 
 def _clave():
@@ -145,32 +146,37 @@ def _clonar_con_serie(cert, serie: int, firmante_key):
 
 def responder_ocsp(firmante_key, firmante_cert, hoja, estado: str,
                    revocado_en: datetime | None = None, serie: int | None = None,
-                   emisor=None, incluir_certificados=()) -> bytes:
+                   emisor=None, incluir_certificados=(), razon=None,
+                   this_update: datetime | None = None, next_update=...) -> bytes:
     """Respuesta OCSP SUCCESSFUL para `hoja`, firmada con `firmante_key`, en DER."""
     emisor = emisor or firmante_cert
     objetivo = _clonar_con_serie(hoja, serie, firmante_key) if serie is not None else hoja
-    ahora = datetime.now(ZONA_RD)
+    ahora = _REFERENCIA
     b = ocsp.OCSPResponseBuilder().add_response(
         cert=objetivo, issuer=emisor, algorithm=hashes.SHA1(),
         cert_status=getattr(ocsp.OCSPCertStatus, estado),
-        this_update=ahora - timedelta(minutes=1), next_update=ahora + timedelta(days=1),
+        this_update=this_update or ahora - timedelta(minutes=1),
+        next_update=ahora + timedelta(days=1) if next_update is ... else next_update,
         revocation_time=revocado_en if estado == 'REVOKED' else None,
-        revocation_reason=None)
+        revocation_reason=razon)
     b = b.responder_id(ocsp.OCSPResponderEncoding.HASH, firmante_cert)
     if incluir_certificados:
         b = b.certificates(list(incluir_certificados))
     return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.DER)
 
 
-def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: datetime | None) -> bytes:
+def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: datetime | None,
+               razones: dict | None = None, pem: bool = False, last_update: datetime | None = None) -> bytes:
     """CRL en DER con los `revocados` ({serie: fecha})."""
-    ahora = datetime.now(ZONA_RD)
+    ahora = _REFERENCIA
     b = (x509.CertificateRevocationListBuilder()
          .issuer_name(firmante_cert.subject)
-         .last_update(ahora - timedelta(hours=1)))
+         .last_update(last_update or ahora - timedelta(hours=1)))
     if next_update is not None:
         b = b.next_update(next_update)
     for serie, fecha in revocados.items():
-        b = b.add_revoked_certificate(x509.RevokedCertificateBuilder()
-                                      .serial_number(serie).revocation_date(fecha).build())
-    return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.DER)
+        rb = x509.RevokedCertificateBuilder().serial_number(serie).revocation_date(fecha)
+        if razones and serie in razones:
+            rb = rb.add_extension(x509.CRLReason(razones[serie]), critical=False)
+        b = b.add_revoked_certificate(rb.build())
+    return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.PEM if pem else Encoding.DER)

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.serialization import Encoding
@@ -18,6 +18,9 @@ from cryptography.x509.oid import ExtendedKeyUsageOID
 from common.ecf.modelos import FALLO, NO_VERIFICABLE, OK, Verificacion
 
 log = logging.getLogger(__name__)
+
+_TOLERANCIA = timedelta(minutes=5)
+_COMPROMISO = (x509.ReasonFlags.key_compromise, x509.ReasonFlags.ca_compromise)
 
 # url -> (crl, vigente_hasta, huella_del_emisor)
 _CACHE_CRL: dict[str, tuple[x509.CertificateRevocationList, datetime, bytes]] = {}
@@ -76,11 +79,28 @@ def _delegado_valido(delegado: x509.Certificate, emisor: x509.Certificate, ahora
     return delegado.not_valid_before_utc <= ahora.astimezone(timezone.utc) <= delegado.not_valid_after_utc
 
 
+def _ocsp_fresca(resp: ocsp.OCSPResponse, ahora: datetime) -> bool:
+    if resp.this_update_utc > ahora + _TOLERANCIA:
+        return False
+    if resp.next_update_utc is not None:
+        return resp.next_update_utc >= ahora
+    return resp.this_update_utc >= ahora - timedelta(days=7)
+
+
 def _respuesta_autenticada(resp: ocsp.OCSPResponse, hoja: x509.Certificate,
                            emisor: x509.Certificate, ahora: datetime) -> bool:
     if resp.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
         return False
     if resp.serial_number != hoja.serial_number:
+        return False
+    try:
+        esperado = ocsp.OCSPRequestBuilder().add_certificate(hoja, emisor, resp.hash_algorithm).build()
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+    if (resp.issuer_key_hash != esperado.issuer_key_hash
+            or resp.issuer_name_hash != esperado.issuer_name_hash):
+        return False
+    if not _ocsp_fresca(resp, ahora):
         return False
     if _verificar_firma_ocsp(resp, emisor.public_key()):
         return True
@@ -90,7 +110,9 @@ def _respuesta_autenticada(resp: ocsp.OCSPResponse, hoja: x509.Certificate,
     return False
 
 
-def _con_fecha(revocado_utc: datetime, fecha_firma: datetime, origen: str) -> Verificacion:
+def _con_fecha(revocado_utc: datetime, fecha_firma: datetime, origen: str, razon=None) -> Verificacion:
+    if razon in _COMPROMISO:
+        return Verificacion(FALLO, f'Revocado por compromiso de clave el {revocado_utc.date().isoformat()}')
     if revocado_utc <= fecha_firma.astimezone(timezone.utc):
         return Verificacion(FALLO, f'{origen}: revocado el {revocado_utc.date().isoformat()}, antes o al momento de la firma')
     return Verificacion(OK, f'Revocado el {revocado_utc.date().isoformat()}, después de la firma')
@@ -107,7 +129,7 @@ def _por_ocsp(hoja, emisor, fecha_firma, ocsp_post, ahora) -> Verificacion | Non
             if resp.certificate_status == ocsp.OCSPCertStatus.GOOD:
                 return Verificacion(OK, 'OCSP: good')
             if resp.certificate_status == ocsp.OCSPCertStatus.REVOKED:
-                return _con_fecha(resp.revocation_time_utc, fecha_firma, 'OCSP')
+                return _con_fecha(resp.revocation_time_utc, fecha_firma, 'OCSP', resp.revocation_reason)
         except Exception as e:  # red, HTTP != 200 o respuesta malformada: se pasa a CRL
             log.warning('OCSP %s falló: %s', url, e)
     return None
@@ -125,11 +147,27 @@ def _crl_de(url, emisor, descargar, ahora) -> x509.CertificateRevocationList | N
     if en_cache and ahora < en_cache[1] and en_cache[2] == _huella(emisor):
         return en_cache[0]
     crl = _cargar_crl(descargar(url))
-    if not crl.is_signature_valid(emisor.public_key()):
+    if not crl.is_signature_valid(emisor.public_key()) or crl.issuer != emisor.subject:
         return None
+    if crl.last_update_utc > ahora + _TOLERANCIA:
+        return None
+    if crl.next_update_utc is not None and crl.next_update_utc < ahora:
+        return None
+    try:
+        crl.extensions.get_extension_for_class(x509.DeltaCRLIndicator)
+        return None
+    except x509.ExtensionNotFound:
+        pass
     hasta = crl.next_update_utc.astimezone(ahora.tzinfo) if crl.next_update_utc else ahora + timedelta(hours=1)
     _CACHE_CRL[url] = (crl, hasta, _huella(emisor))
     return crl
+
+
+def _razon_crl(entrada):
+    try:
+        return entrada.extensions.get_extension_for_class(x509.CRLReason).value.reason
+    except x509.ExtensionNotFound:
+        return None
 
 
 def _por_crl(hoja, emisor, fecha_firma, descargar, ahora) -> Verificacion | None:
@@ -141,7 +179,7 @@ def _por_crl(hoja, emisor, fecha_firma, descargar, ahora) -> Verificacion | None
             entrada = crl.get_revoked_certificate_by_serial_number(hoja.serial_number)
             if entrada is None:
                 return Verificacion(OK, 'CRL: no revocado')
-            return _con_fecha(entrada.revocation_date_utc, fecha_firma, 'CRL')
+            return _con_fecha(entrada.revocation_date_utc, fecha_firma, 'CRL', _razon_crl(entrada))
         except Exception as e:
             log.warning('CRL %s falló: %s', url, e)
     return None

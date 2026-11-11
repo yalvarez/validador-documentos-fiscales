@@ -49,3 +49,60 @@ def test_crl_en_cache():
     llamadas = []
     def d(u): llamadas.append(u); return crl({})
     revisar(descargar=d); revisar(descargar=d); assert len(llamadas) == 1
+
+
+# --- ronda de correcciones: frescura, CertID, CRL, compromiso de clave ---
+from cryptography import x509
+RF = x509.ReasonFlags
+def _ro(estado='GOOD', revocado_en=None, emisor=ca, **kw):
+    return lambda u, b: responder_ocsp(ca_k, ca, hoja, estado, revocado_en, emisor=emisor, **kw)
+def _crl_de(revocados, next_update=T0 + timedelta(days=4), **kw):
+    return lambda u: firmar_crl(ca_k, ca, revocados, next_update, **kw)
+VIEJA = dict(this_update=T0 - timedelta(days=3), next_update=T0 - timedelta(days=1))
+
+def test_ocsp_vencida_no_se_acepta(): assert revisar(_ro(**VIEJA)).resultado == NO_VERIFICABLE
+def test_ocsp_vencida_cae_a_crl(): assert revisar(_ro(**VIEJA), _crl_de({})).detalle == 'CRL: no revocado'
+def test_ocsp_this_update_futuro_no_se_acepta():
+    assert revisar(_ro(this_update=T0 + timedelta(hours=1))).resultado == NO_VERIFICABLE
+def test_ocsp_sin_next_update_antigua_no_se_acepta():
+    assert revisar(_ro(this_update=T0 - timedelta(days=8), next_update=None)).resultado == NO_VERIFICABLE
+def test_ocsp_sin_next_update_reciente_se_acepta():
+    assert revisar(_ro(this_update=T0 - timedelta(days=1), next_update=None)).resultado == OK
+def test_ocsp_certid_de_otro_emisor_no_se_acepta():
+    _, otra = crear_ca('Otra')
+    assert revisar(_ro(emisor=otra)).resultado == NO_VERIFICABLE
+def test_crl_vencida_no_se_acepta():
+    assert revisar(descargar=_crl_de({}, next_update=T0 - timedelta(hours=1))).resultado == NO_VERIFICABLE
+def test_crl_con_otro_nombre_de_emisor_no_se_acepta():
+    _, otra = crear_ca('Otra')
+    assert revisar(descargar=lambda u: firmar_crl(ca_k, otra, {}, T0 + timedelta(days=4))).resultado == NO_VERIFICABLE
+def test_crl_last_update_futuro_no_se_acepta():
+    assert revisar(descargar=_crl_de({}, last_update=T0 + timedelta(hours=1))).resultado == NO_VERIFICABLE
+def test_compromiso_de_clave_ocsp_falla_aunque_sea_posterior():
+    r = revisar(_ro('REVOKED', FIRMA + timedelta(days=1), razon=RF.key_compromise))
+    assert r.resultado == FALLO and r.detalle.startswith('Revocado por compromiso de clave el ')
+def test_compromiso_de_clave_crl_falla_aunque_sea_posterior():
+    s = hoja.serial_number
+    assert revisar(descargar=_crl_de({s: FIRMA + timedelta(days=1)}, razones={s: RF.ca_compromise})).resultado == FALLO
+def test_superseded_posterior_ocsp_ok():
+    assert revisar(_ro('REVOKED', FIRMA + timedelta(days=1), razon=RF.superseded)).resultado == OK
+def test_superseded_posterior_crl_ok():
+    s = hoja.serial_number
+    assert revisar(descargar=_crl_de({s: FIRMA + timedelta(days=1)}, razones={s: RF.superseded})).resultado == OK
+def test_crl_pem(): assert revisar(descargar=_crl_de({}, pem=True)).detalle == 'CRL: no revocado'
+def test_crl_sin_next_update_cache_una_hora(monkeypatch):
+    # el constructor de cryptography exige next_update: se simula una CRL sin él
+    from common.ecf.verificaciones import revocacion as rev
+    real = rev._cargar_crl
+    class SinNext:
+        def __init__(self, c): self._c = c
+        next_update_utc = None
+        def __getattr__(self, n): return getattr(self._c, n)
+    monkeypatch.setattr(rev, '_cargar_crl', lambda datos: SinNext(real(datos)))
+    llamadas = []
+    def d(u): llamadas.append(u); return firmar_crl(ca_k, ca, {}, T0 + timedelta(days=4))
+    verificar_revocacion(hoja, ca, FIRMA, lanza, d, T0)
+    verificar_revocacion(hoja, ca, FIRMA, lanza, d, T0 + timedelta(minutes=59))
+    assert len(llamadas) == 1
+    verificar_revocacion(hoja, ca, FIRMA, lanza, d, T0 + timedelta(minutes=61))
+    assert len(llamadas) == 2
