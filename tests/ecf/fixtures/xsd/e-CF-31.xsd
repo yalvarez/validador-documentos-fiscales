@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Esquema MINIMO de prueba (no es el oficial de la DGII): exige ECF/Encabezado/Totales/MontoTotal.
+     No declara ds:Signature, por lo que se valida una copia sin la firma. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="unqualified">
+  <xs:element name="ECF">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Encabezado">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Version" type="xs:string"/>
+              <xs:element name="IdDoc" type="xs:anyType"/>
+              <xs:element name="Emisor" type="xs:anyType"/>
+              <xs:element name="Comprador" type="xs:anyType" minOccurs="0"/>
+              <xs:element name="Totales">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="MontoExento" type="xs:decimal" minOccurs="0"/>
+                    <xs:element name="MontoTotal" type="xs:decimal"/>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
