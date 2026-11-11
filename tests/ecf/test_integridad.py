@@ -30,3 +30,23 @@ def test_sin_firma():
 
 def test_firmado_con_pki_de_prueba():
     assert verificar_integridad(ecf_de_prueba('E310000000001')).resultado == OK
+
+
+def test_firma_sobre_subelemento_no_cubre_documento():
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from lxml import etree
+    from signxml import XMLSigner, methods
+    from ayudantes import HOJA_PRUEBA, HOJA_PRUEBA_KEY
+    raiz = etree.fromstring(XML_SIN_FIRMA)
+    raiz.xpath('//Encabezado')[0].set('Id', 'enc')
+    firmador = XMLSigner(method=methods.enveloped, signature_algorithm='rsa-sha256',
+                         digest_algorithm='sha256',
+                         c14n_algorithm='http://www.w3.org/TR/2001/REC-xml-c14n-20010315')
+    firmador.namespaces = {None: 'http://www.w3.org/2000/09/xmldsig#'}
+    firmado = etree.tostring(firmador.sign(
+        raiz, key=HOJA_PRUEBA_KEY, cert=[HOJA_PRUEBA.public_bytes(Encoding.PEM).decode()],
+        reference_uri='#enc'))
+    r = verificar_integridad(firmado.replace(b'<MontoTotal>1250</MontoTotal>',
+                                             b'<MontoTotal>9250</MontoTotal>'))
+    assert firmado.count(b'<MontoTotal>1250</MontoTotal>') == 1
+    assert r.resultado == FALLO and 'no cubre el documento completo' in r.detalle

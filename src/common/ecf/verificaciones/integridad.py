@@ -17,6 +17,12 @@ def verificar_integridad(xml_bytes: bytes) -> Verificacion:
     try:
         xml = normalizar_xml_bytes(xml_bytes)
         raiz = etree.fromstring(xml)
+        ns = {'ds': NS_DSIG}
+        for firma in raiz.xpath('//ds:Signature', namespaces=ns):
+            uris = [r.get('URI') for r in firma.xpath('ds:SignedInfo/ds:Reference', namespaces=ns)]
+            if uris != ['']:
+                return Verificacion(
+                    FALLO, f'La firma no cubre el documento completo (Reference URI={uris})')
         nodos = raiz.xpath('//ds:X509Certificate', namespaces={'ds': NS_DSIG})
         if not nodos or not (nodos[0].text or '').strip():
             return Verificacion(FALLO, 'Sin certificado incrustado')
