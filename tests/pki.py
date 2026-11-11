@@ -31,20 +31,21 @@ def _nombre(cn: str, org: str, ou: str) -> x509.Name:
 
 
 def _construir(sujeto, emisor_nombre, clave_pub, emisor_key, not_before, not_after,
-               es_ca, emisor_pub, ocsp_url=None, crl_url=None, ca_issuers_url=None):
+               es_ca, emisor_pub, ocsp_url=None, crl_url=None, ca_issuers_url=None,
+               path_length=None, key_cert_sign=True):
     b = (x509.CertificateBuilder()
          .subject_name(sujeto).issuer_name(emisor_nombre)
          .public_key(clave_pub)
          .serial_number(x509.random_serial_number())
          .not_valid_before(not_before).not_valid_after(not_after)
-         .add_extension(x509.BasicConstraints(ca=es_ca, path_length=None), critical=True)
+         .add_extension(x509.BasicConstraints(ca=es_ca, path_length=path_length if es_ca else None), critical=True)
          .add_extension(x509.SubjectKeyIdentifier.from_public_key(clave_pub), critical=False)
          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(emisor_pub),
                         critical=False))
     if es_ca:
         b = b.add_extension(x509.KeyUsage(
             digital_signature=True, content_commitment=False, key_encipherment=False,
-            data_encipherment=False, key_agreement=False, key_cert_sign=True, crl_sign=True,
+            data_encipherment=False, key_agreement=False, key_cert_sign=key_cert_sign, crl_sign=True,
             encipher_only=False, decipher_only=False), critical=True)
     aia = []
     if ocsp_url:
@@ -105,4 +106,15 @@ def crear_ca_con_subject(subject: x509.Name):
     key = _clave()
     cert = _construir(subject, subject, key.public_key(), key, _INICIO, _FIN, True,
                       key.public_key())
+    return key, cert
+
+
+def crear_subordinado(emisor_key, emisor_cert, nombre, es_ca=True, path_length=None,
+                      key_cert_sign=True, not_before=None, not_after=None,
+                      org='CA PRUEBA', ou='CA PRUEBA DOMINICANA'):
+    """Certificado emitido por `emisor` con control de CA, pathlen, KeyUsage y vigencia."""
+    key = _clave()
+    cert = _construir(_nombre(nombre, org, ou), emisor_cert.subject, key.public_key(), emisor_key,
+                      not_before or _INICIO, not_after or _FIN, es_ca, emisor_cert.public_key(),
+                      path_length=path_length, key_cert_sign=key_cert_sign)
     return key, cert

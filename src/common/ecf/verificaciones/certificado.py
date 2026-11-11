@@ -85,6 +85,23 @@ def _emitido_por(hijo: x509.Certificate, padre: x509.Certificate) -> bool:
     return True
 
 
+def _puede_emitir(padre: x509.Certificate, debajo: int) -> bool:
+    """`padre` es CA, puede firmar certificados y su pathlen admite `debajo` intermedios."""
+    try:
+        bc = padre.extensions.get_extension_for_class(x509.BasicConstraints).value
+    except x509.ExtensionNotFound:
+        return False
+    if not bc.ca:
+        return False
+    try:
+        ku = padre.extensions.get_extension_for_class(x509.KeyUsage).value
+        if not ku.key_cert_sign:
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    return bc.path_length is None or debajo <= bc.path_length
+
+
 def _urls_ca_issuers(cert: x509.Certificate) -> list[str]:
     try:
         aia = cert.extensions.get_extension_for_class(x509.AuthorityInformationAccess).value
@@ -92,28 +109,28 @@ def _urls_ca_issuers(cert: x509.Certificate) -> list[str]:
         return []
     return [d.access_location.value for d in aia
             if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS
-            and isinstance(d.access_location, x509.UniformResourceIdentifier)]
+            and isinstance(d.access_location, x509.UniformResourceIdentifier)
+            and d.access_location.value.lower().startswith(('http://', 'https://'))]
 
 
-def _descargar_emisor(cert, descargar: Callable[[str], bytes] | None):
+def _emisores_aia(cert, descargar: Callable[[str], bytes] | None):
+    """Certificados descargados de cada URL CA Issuers del AIA (con caché)."""
     if descargar is None:
-        return None
+        return
     for url in _urls_ca_issuers(cert):
-        if url in _cache_aia:
-            return _cache_aia[url]
-        try:
-            emisor = cargar_certificado(descargar(url))
-        except Exception:  # noqa: BLE001 - red o formato: la cadena simplemente no se completa
-            logger.warning('No se pudo descargar el emisor AIA %s', url)
-            continue
-        _cache_aia[url] = emisor
-        return emisor
-    return None
+        if url not in _cache_aia:
+            try:
+                _cache_aia[url] = cargar_certificado(descargar(url))
+            except Exception:  # noqa: BLE001 - red o formato: la cadena simplemente no se completa
+                logger.warning('No se pudo descargar el emisor AIA %s', url)
+                continue
+        yield _cache_aia[url]
 
 
 def verificar_entidad_certificadora(
         cert: x509.Certificate | None, incrustados: list[x509.Certificate], ca_dir: Path,
         descargar: Callable[[str], bytes] | None = None,
+        fecha_firma: datetime | None = None,
 ) -> tuple[Verificacion, list[x509.Certificate] | None]:
     """OK si la cadena de `cert` contiene, por huella SHA-256, un ancla de `ca_dir`.
 
@@ -127,16 +144,30 @@ def verificar_entidad_certificadora(
     huellas = {_huella(a): a for a in anclas}
     otros = list(incrustados)
 
+    motivos: list[str] = []
+
+    def admisible(actual, padre, cadena) -> bool:
+        if not _emitido_por(actual, padre):
+            return False
+        debajo = sum(1 for c in cadena[1:] if c.issuer != c.subject)
+        if not _puede_emitir(padre, debajo):
+            return False
+        if fecha_firma is not None and not (
+                padre.not_valid_before_utc <= fecha_firma <= padre.not_valid_after_utc):
+            motivos.append(f"'{_atributo(padre.subject, NameOID.COMMON_NAME)}' fuera de vigencia "
+                           f"al firmar")
+            return False
+        return True
+
     cadena = [cert]
     actual = cert
     for _ in range(_MAX_PROFUNDIDAD):
-        padre = next((a for a in anclas if _emitido_por(actual, a)), None)
+        padre = next((a for a in anclas if admisible(actual, a, cadena)), None)
         if padre is None:
-            padre = next((c for c in otros if _emitido_por(actual, c)), None)
+            padre = next((c for c in otros if admisible(actual, c, cadena)), None)
         if padre is None:
-            padre = _descargar_emisor(actual, descargar)
-            if padre is not None and not _emitido_por(actual, padre):
-                padre = None
+            padre = next((c for c in _emisores_aia(actual, descargar)
+                          if admisible(actual, c, cadena)), None)
         if padre is None or any(_huella(padre) == _huella(c) for c in cadena):
             break
         cadena.append(padre)
@@ -146,4 +177,7 @@ def verificar_entidad_certificadora(
                        f"{_atributo(ancla.subject, NameOID.ORGANIZATIONAL_UNIT_NAME)}")
             return Verificacion(OK, detalle), cadena
         actual = padre
-    return Verificacion(FALLO, 'La cadena no llega a una entidad certificadora autorizada'), None
+    detalle = 'La cadena no llega a una entidad certificadora autorizada'
+    if motivos:
+        detalle += ': ' + '; '.join(dict.fromkeys(motivos))
+    return Verificacion(FALLO, detalle), None
