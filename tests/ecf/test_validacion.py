@@ -83,14 +83,25 @@ def test_config_desde_parametros(tmp_path):
 
 
 # --- HTTP real, con requests simulado ---
+PUBLICA = '93.184.216.34'
+
+
+@pytest.fixture(autouse=True)
+def _dns_publico(monkeypatch):
+    monkeypatch.setattr(validacion, '_resolver', lambda host, puerto: [PUBLICA])
+
+
 class _Resp:
-    def __init__(self, cuerpo: bytes):
-        self.cuerpo = cuerpo
+    def __init__(self, cuerpo: bytes, status_code: int = 200, trozos_lentos=None):
+        self.cuerpo, self.status_code, self.trozos_lentos = cuerpo, status_code, trozos_lentos
 
     def raise_for_status(self):
         pass
 
     def iter_content(self, chunk_size=8192):
+        if self.trozos_lentos:
+            yield from self.trozos_lentos()
+            return
         for i in range(0, len(self.cuerpo), chunk_size):
             yield self.cuerpo[i:i + chunk_size]
 
@@ -99,16 +110,17 @@ class _Resp:
 
 
 class _Requests:
-    def __init__(self, cuerpo=b'ok'):
+    def __init__(self, cuerpo=b'ok', status_code=200, trozos_lentos=None):
         self.llamadas, self.cuerpo = [], cuerpo
+        self.status_code, self.trozos_lentos = status_code, trozos_lentos
 
     def get(self, url, **kw):
         self.llamadas.append(('get', url, kw))
-        return _Resp(self.cuerpo)
+        return _Resp(self.cuerpo, self.status_code, self.trozos_lentos)
 
     def post(self, url, **kw):
         self.llamadas.append(('post', url, kw))
-        return _Resp(self.cuerpo)
+        return _Resp(self.cuerpo, self.status_code, self.trozos_lentos)
 
 
 @pytest.mark.parametrize('url', ['file:///etc/passwd', 'ftp://x/y', 'gopher://x', '/ruta', ''])
@@ -147,3 +159,86 @@ def test_http_ocsp_post_cabecera_timeout_y_tope(monkeypatch):
     monkeypatch.setattr(validacion, 'requests', _Requests(b'a' * (64 * 1024 + 1)))
     with pytest.raises(ValueError):
         http_ocsp_post('http://ocsp.x/o', b'req')
+
+
+@pytest.mark.parametrize('url', [
+    'http://127.0.0.1/x', 'http://10.0.0.5/x', 'http://169.254.169.254/latest/meta-data',
+    'http://[::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://0.0.0.0/x', 'http://192.168.1.1:8080/x',
+    'http://localhost./x', 'http:///sin-host'])
+def test_http_rechaza_destinos_no_publicos(monkeypatch, url):
+    falso = _Requests()
+    monkeypatch.setattr(validacion, 'requests', falso)
+    monkeypatch.setattr(validacion, '_resolver', lambda h, p: ['127.0.0.1'])
+    with pytest.raises(ValueError):
+        http_descargar(url)
+    with pytest.raises(ValueError):
+        http_ocsp_post(url, b'x')
+    assert falso.llamadas == []
+
+
+def test_http_rechaza_hostname_que_resuelve_a_ip_privada(monkeypatch):
+    falso = _Requests()
+    monkeypatch.setattr(validacion, 'requests', falso)
+    monkeypatch.setattr(validacion, '_resolver', lambda h, p: [PUBLICA, '10.1.2.3'])
+    with pytest.raises(ValueError, match='Destino no permitido: interno.ejemplo.com'):
+        http_descargar('http://Interno.Ejemplo.com./a.crt')
+    assert falso.llamadas == []
+
+
+def test_http_destino_publico_sin_redirecciones(monkeypatch):
+    falso = _Requests(b'ok')
+    monkeypatch.setattr(validacion, 'requests', falso)
+    assert http_descargar('http://cps.viafirma.do/a.crt') == b'ok'
+    assert http_ocsp_post('http://ocsp.viafirma.do/o', b'q') == b'ok'
+    assert all(ll[2]['allow_redirects'] is False for ll in falso.llamadas) and len(falso.llamadas) == 2
+
+
+def test_http_redireccion_es_error(monkeypatch):
+    monkeypatch.setattr(validacion, 'requests', _Requests(b'', status_code=302))
+    with pytest.raises(ValueError, match='Redirección'):
+        http_descargar('http://cps.viafirma.do/a.crt')
+    with pytest.raises(ValueError, match='Redirección'):
+        http_ocsp_post('http://ocsp.viafirma.do/o', b'q')
+
+
+def test_http_plazo_total_excedido(monkeypatch):
+    ahora = [0.0]
+    monkeypatch.setattr(validacion, '_reloj', lambda: ahora[0])
+
+    def lento():
+        for _ in range(10):
+            ahora[0] += 4  # cada trozo tarda 4 s: dentro del timeout por operación, pero acumula
+            yield b'a'
+
+    monkeypatch.setattr(validacion, 'requests', _Requests(trozos_lentos=lento))
+    with pytest.raises(ValueError, match='plazo total'):
+        http_descargar('http://cps.viafirma.do/a.crt')
+
+
+def test_tope_de_descargas_por_validacion():
+    contador = [0]
+    llamadas = []
+    f = validacion._con_tope(lambda u: llamadas.append(u) or b'x', contador)
+    for _ in range(validacion.MAX_FETCHES):
+        f('u')
+    with pytest.raises(ConnectionError):
+        f('u')
+    assert len(llamadas) == validacion.MAX_FETCHES
+
+
+def test_validar_xml_degrada_al_superar_tope_de_descargas(tmp_path):
+    (tmp_path / 'ca.pem').write_bytes(CA_PRUEBA.public_bytes(Encoding.PEM))
+    veces = []
+
+    def ocsp(u, b):
+        veces.append(u)
+        raise ConnectionError('caído')
+
+    def crl(u):
+        veces.append(u)
+        raise ConnectionError('caído')
+
+    cfg = config_con(ca_dir=tmp_path, ocsp_post=ocsp, descargar=crl)
+    r = validar_xml(ecf_de_prueba('E310000000002'), None, cfg, ahora=T0)
+    assert r.revocacion.resultado == NO_VERIFICABLE
+    assert len(veces) <= validacion.MAX_FETCHES

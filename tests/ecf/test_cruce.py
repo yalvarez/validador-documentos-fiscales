@@ -36,9 +36,18 @@ def test_cruce_sin_pdf():
     assert verificar_cruce(D, {}).resultado == NO_VERIFICABLE
 
 
-def test_cruce_campo_ausente_no_discrepa():
-    q = {k: v for k, v in QR_MUESTRA.items() if k != 'MontoTotal'}
+def test_cruce_campo_opcional_ausente_no_discrepa():
+    q = {k: v for k, v in QR_MUESTRA.items() if k not in ('RncComprador', 'FechaEmision', 'FechaFirma')}
+    assert set(q) == {'RncEmisor', 'ENCF', 'MontoTotal', 'CodigoSeguridad'}  # forma FC
     assert verificar_cruce(D, q).resultado == OK
+
+
+def test_cruce_qr_sin_campos_requeridos():
+    v = verificar_cruce(D, {'otro': 'x'})
+    assert v.resultado == FALLO and v.detalle == 'QR sin campos requeridos: RncEmisor, ENCF, MontoTotal, CodigoSeguridad'
+    q = {k: val for k, val in QR_MUESTRA.items() if k != 'CodigoSeguridad'}
+    v = verificar_cruce(D, q)
+    assert v.resultado == FALLO and v.detalle == 'QR sin campos requeridos: CodigoSeguridad'
 
 
 def test_cruce_varias_discrepancias_con_nombres_del_qr():

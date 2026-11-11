@@ -13,6 +13,10 @@ _FMT_FECHA_HORA = '%d-%m-%Y %H:%M:%S'
 _CAMPOS = ('RncEmisor', 'RncComprador', 'ENCF', 'FechaEmision', 'MontoTotal', 'FechaFirma', 'CodigoSeguridad')
 
 
+# Mínimo que identifica la factura; los demás campos del QR son opcionales (la variante FC no los trae).
+_REQUERIDOS = ('RncEmisor', 'ENCF', 'MontoTotal', 'CodigoSeguridad')
+
+
 def _rnc(valor) -> str | None:
     return str(valor).strip().upper() if valor is not None else None
 
@@ -60,6 +64,9 @@ def verificar_cruce(d: DatosECF, qr_params: dict | None) -> Verificacion:
         'FechaFirma': lambda v: _fecha(v, _FMT_FECHA_HORA) == _fecha(d.fecha_firma_texto, _FMT_FECHA_HORA),
         'CodigoSeguridad': lambda v: _normalizar_codigo(v) == d.codigo_seguridad,
     }
+    faltan = [c for c in _REQUERIDOS if c.lower() not in qr]
+    if faltan:
+        return Verificacion(FALLO, 'QR sin campos requeridos: ' + ', '.join(faltan))
     discrepan = [c for c in _CAMPOS if c.lower() in qr and not comparadores[c](qr[c.lower()])]
     if discrepan:
         return Verificacion(FALLO, 'Discrepan: ' + ', '.join(discrepan))
