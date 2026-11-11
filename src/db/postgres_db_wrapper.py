@@ -1,4 +1,7 @@
+from datetime import datetime
+
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from .base_db_wrapper import BaseDBWrapper
@@ -19,6 +22,23 @@ def _validar_columnas(campos):
     desconocidas = set(campos) - COLUMNAS_COMPROBANTE
     if desconocidas:
         raise ValueError(f'Columnas desconocidas: {sorted(desconocidas)}')
+
+
+def _preparar(campos):
+    """Valida columnas y zonas horarias; devuelve una copia con RNC/e-NCF normalizados."""
+    _validar_columnas(campos)
+    copia = dict(campos)
+    for c in ('rnc_emisor', 'encf'):
+        if isinstance(copia.get(c), str):
+            copia[c] = copia[c].strip().upper()
+    for c, v in copia.items():
+        _exigir_aware(c, v)
+    return copia
+
+
+def _exigir_aware(nombre, v):
+    if isinstance(v, datetime) and v.tzinfo is None:
+        raise ValueError(f'Fecha sin zona horaria: {nombre}')
 
 
 def _valor(v):
@@ -224,24 +244,27 @@ class PostgresDBWrapper(BaseDBWrapper):
         return filas[0] if filas else None
 
     def insert_comprobante(self, campos):
-        _validar_columnas(campos)
+        campos = _preparar(campos)
         columnas = list(campos)
-        cur = self.conn.execute(
-            f"INSERT INTO comprobantes ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))}) "
-            'ON CONFLICT (rnc_emisor, encf) DO NOTHING RETURNING id',
-            [_valor(campos[c]) for c in columnas])
+        consulta = sql.SQL(
+            'INSERT INTO comprobantes ({}) VALUES ({}) ON CONFLICT (rnc_emisor, encf) DO NOTHING RETURNING id'
+        ).format(
+            sql.SQL(', ').join(sql.Identifier(c) for c in columnas),
+            sql.SQL(', ').join(sql.Placeholder() for _ in columnas))
+        cur = self.conn.execute(consulta, [_valor(campos[c]) for c in columnas])
         fila = cur.fetchone()
         return fila[0] if fila else None
 
     def update_comprobante(self, id, campos):
-        _validar_columnas(campos)
-        asignaciones = [f'{c} = %s' for c in campos] + ['actualizado_en = now()']
-        self.conn.execute(
-            f"UPDATE comprobantes SET {', '.join(asignaciones)} WHERE id = %s",
-            [_valor(v) for v in campos.values()] + [id])
+        campos = _preparar(campos)
+        asignaciones = [sql.SQL('{} = %s').format(sql.Identifier(c)) for c in campos]
+        asignaciones.append(sql.SQL('actualizado_en = now()'))
+        consulta = sql.SQL('UPDATE comprobantes SET {} WHERE id = %s').format(sql.SQL(', ').join(asignaciones))
+        self.conn.execute(consulta, [_valor(v) for v in campos.values()] + [id])
 
     def insert_historial(self, id, tipo, estado_anterior=None, estado_nuevo=None,
                          estado_dgii_texto=None, detalle=None, fecha=None):
+        _exigir_aware('fecha', fecha)
         self.conn.execute(
             'INSERT INTO comprobante_historial '
             '(comprobante_id, fecha, tipo, estado_anterior, estado_nuevo, estado_dgii_texto, detalle) '
@@ -253,6 +276,7 @@ class PostgresDBWrapper(BaseDBWrapper):
             'SELECT * FROM comprobante_historial WHERE comprobante_id = %s ORDER BY fecha, id', (id,))
 
     def get_comprobantes_por_consultar(self, ahora, limite=100):
+        _exigir_aware('ahora', ahora)
         return self._filas(
             'SELECT * FROM comprobantes WHERE seguimiento_activo AND proxima_consulta <= %s '
             'ORDER BY proxima_consulta, id LIMIT %s', (ahora, limite))

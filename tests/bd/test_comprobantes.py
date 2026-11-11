@@ -43,3 +43,33 @@ def test_transaccion_revierte(db_pg):
             db_pg.update_comprobante(cid, {'estado': 'ACEPTADO'})
             raise RuntimeError()
     assert db_pg.get_comprobante('101616202', 'E310000002882')['estado'] == 'PENDIENTE'
+
+
+def test_insert_normaliza_rnc_y_encf(db_pg):
+    cid = db_pg.insert_comprobante(campos_minimos(' e310000002882 ', rnc_emisor=' 101616202 '))
+    assert db_pg.get_comprobante('101616202', 'E310000002882')['id'] == cid
+    assert db_pg.insert_comprobante(campos_minimos('E310000002882')) is None
+    assert db_pg.insert_comprobante(campos_minimos('e310000002882 ')) is None
+
+
+def test_update_normaliza_y_rechaza_desconocida(db_pg):
+    cid = db_pg.insert_comprobante(campos_minimos())
+    antes = db_pg.get_comprobante('101616202', 'E310000002882')['actualizado_en']
+    with pytest.raises(ValueError):
+        db_pg.update_comprobante(cid, {'nada': 1})
+    db_pg.update_comprobante(cid, {'encf': ' e31z '})
+    c = db_pg.get_comprobante('101616202', 'E31Z')
+    assert c['id'] == cid and c['actualizado_en'] > antes
+
+
+def test_fecha_sin_zona_rechazada(db_pg):
+    ingenua = T0.replace(tzinfo=None)
+    with pytest.raises(ValueError, match='proxima_consulta'):
+        db_pg.insert_comprobante(campos_minimos(proxima_consulta=ingenua))
+    cid = db_pg.insert_comprobante(campos_minimos())
+    with pytest.raises(ValueError):
+        db_pg.update_comprobante(cid, {'seguimiento_hasta': ingenua})
+    with pytest.raises(ValueError):
+        db_pg.insert_historial(cid, 'CONSULTA', fecha=ingenua)
+    with pytest.raises(ValueError):
+        db_pg.get_comprobantes_por_consultar(ingenua)
