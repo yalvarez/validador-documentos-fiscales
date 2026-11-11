@@ -33,8 +33,14 @@ class DatosECF:
     certificados_der: list[bytes] = field(default_factory=list)
 
 
+_SIN_FIRMA = "[not(ancestor::*[local-name()='Signature'])]"
+_RUTA_CERTS = ("*[local-name()='Signature'][1]/*[local-name()='KeyInfo']"
+               "/*[local-name()='X509Data']/*[local-name()='X509Certificate']")
+
+
 def _texto(raiz, nombre: str) -> str | None:
-    nodos = raiz.xpath(f"//*[local-name()='{nombre}']")
+    """Campo de negocio: ignora todo lo que esté dentro de una Signature (no firmado)."""
+    nodos = raiz.xpath(f"//*[local-name()='{nombre}']{_SIN_FIRMA}")
     if not nodos or nodos[0].text is None:
         return None
     t = nodos[0].text.strip()
@@ -69,11 +75,13 @@ def leer_ecf(xml_bytes: bytes) -> DatosECF:
         except ValueError:
             fecha_firma = None
 
-    sig = _texto(raiz, 'SignatureValue')
+    # Solo la Signature hija directa de la raíz (la única que integridad acepta).
+    nodos_sig = raiz.xpath("*[local-name()='Signature'][1]/*[local-name()='SignatureValue']")
+    sig = (nodos_sig[0].text or '').strip() if nodos_sig else None
     sig = ''.join(sig.split()) if sig else None
 
     certs = []
-    for nodo in raiz.xpath("//*[local-name()='X509Certificate']"):
+    for nodo in raiz.xpath(_RUTA_CERTS):
         try:
             certs.append(base64.b64decode(''.join((nodo.text or '').split()), validate=True))
         except (binascii.Error, ValueError):

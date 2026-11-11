@@ -50,3 +50,61 @@ def test_firma_sobre_subelemento_no_cubre_documento():
                                              b'<MontoTotal>9250</MontoTotal>'))
     assert firmado.count(b'<MontoTotal>1250</MontoTotal>') == 1
     assert r.resultado == FALLO and 'no cubre el documento completo' in r.detalle
+
+
+NS = {'ds': 'http://www.w3.org/2000/09/xmldsig#'}
+
+
+def _firmado_con_objeto_falso():
+    """Firma válida, movida al inicio, con un ds:Object que contiene datos falsos."""
+    from lxml import etree
+    raiz = etree.fromstring(ecf_de_prueba('E310000000001'))
+    firma = raiz.xpath('ds:Signature', namespaces=NS)[0]
+    obj = etree.SubElement(firma, '{%s}Object' % NS['ds'])
+    fake = etree.SubElement(obj, 'ECF')
+    etree.SubElement(fake, 'eNCF').text = 'E319999999999'
+    etree.SubElement(fake, 'RNCEmisor').text = '999999999'
+    raiz.insert(0, firma)
+    return raiz
+
+
+def test_leer_ecf_ignora_datos_dentro_de_la_firma():
+    from lxml import etree
+    from common.ecf.lectura import leer_ecf
+    d = leer_ecf(etree.tostring(_firmado_con_objeto_falso()))
+    assert d.encf == 'E310000000001' and d.rnc_emisor == '101616202'
+    assert d.signature_value and len(d.certificados_der) == 1
+
+
+def test_segunda_firma_inyectada_es_fallo():
+    import copy
+    from lxml import etree
+    raiz = etree.fromstring(ecf_de_prueba('E310000000001'))
+    firma = raiz.xpath('ds:Signature', namespaces=NS)[0]
+    raiz.insert(0, copy.deepcopy(firma))
+    r = verificar_integridad(etree.tostring(raiz))
+    assert r.resultado == FALLO and 'exactamente una firma' in r.detalle
+
+
+def test_firma_no_hija_directa_es_fallo():
+    from lxml import etree
+    raiz = etree.fromstring(ecf_de_prueba('E310000000001'))
+    firma = raiz.xpath('ds:Signature', namespaces=NS)[0]
+    envoltorio = etree.Element('Envoltorio')
+    envoltorio.append(firma)
+    raiz.append(envoltorio)
+    r = verificar_integridad(etree.tostring(raiz))
+    assert r.resultado == FALLO and 'hija directa' in r.detalle
+
+
+def test_certificado_suelto_fuera_de_keyinfo_no_se_lee():
+    from lxml import etree
+    from common.ecf.lectura import leer_ecf
+    raiz = etree.fromstring(ecf_de_prueba('E310000000001'))
+    suelto = etree.Element('{%s}X509Certificate' % NS['ds'])
+    suelto.text = 'AAAA'
+    raiz.insert(0, suelto)
+    otro = etree.SubElement(raiz, 'X509Certificate')
+    otro.text = 'BBBB'
+    d = leer_ecf(etree.tostring(raiz))
+    assert len(d.certificados_der) == 1 and d.certificados_der[0] != b'\x00\x00\x00'
