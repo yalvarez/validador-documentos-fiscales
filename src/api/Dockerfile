@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api /app/api
 ## No copiar db para evitar conflicto de volumen, solo crear el directorio
 COPY common /app/common
+COPY seguimiento /app/seguimiento
 
 RUN mkdir -p /app/db
 RUN mkdir -p /app/db

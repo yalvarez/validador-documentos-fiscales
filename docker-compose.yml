@@ -33,6 +33,20 @@ services:
       - "7000:8000"
     restart: unless-stopped
 
+  seguimiento:
+    build:
+      context: ./src
+      dockerfile: api/Dockerfile
+    container_name: validador-seguimiento
+    command: python -m seguimiento.worker_main
+    environment:
+      - DB_ENGINE=postgres
+      - DB_CONNECTION_STRING=postgresql://validador:${POSTGRES_PASSWORD}@postgres:5432/validador
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # frontend:
   #   build:
   #     context: ./src/client
