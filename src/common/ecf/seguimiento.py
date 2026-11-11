@@ -40,6 +40,8 @@ def config_seguimiento_desde_parametros(parametros) -> ConfigSeguimiento:
             valor = tipo(str(crudo).strip())
             if not valor > 0 or valor != valor or valor == float('inf'):
                 raise ValueError('debe ser positivo y finito')
+            if f.name == 'factor' and valor < 1:
+                raise ValueError('el factor debe ser >= 1 (si no, el intervalo se reduciría)')
         except (ValueError, TypeError) as e:
             logging.warning('Parámetro %s inválido (%r): %s; se usa %r', clave, crudo, e, getattr(cfg, f.name))
             continue

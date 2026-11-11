@@ -69,3 +69,12 @@ def test_parametros(db_pg):
     db_pg.set_param('SEGUIMIENTO_DURACION_MAX_HORAS', '24')
     cfg = config_seguimiento_desde_parametros(ParametrosManager(db_pg))
     assert cfg.factor == 2.0 and cfg.duracion_max_horas == 24
+
+
+def test_factor_menor_que_uno_usa_defecto(caplog):  # T10
+    for valor in ('0.5', '0.99'):
+        cfg = config_seguimiento_desde_parametros({'SEGUIMIENTO_FACTOR': valor})
+        assert cfg.factor == 2.0
+    assert 'SEGUIMIENTO_FACTOR' in caplog.text
+    assert config_seguimiento_desde_parametros({'SEGUIMIENTO_FACTOR': '1'}).factor == 1.0
+    assert config_seguimiento_desde_parametros({'SEGUIMIENTO_FACTOR': '1.5'}).factor == 1.5
