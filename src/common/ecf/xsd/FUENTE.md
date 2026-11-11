@@ -30,7 +30,9 @@ Al instalarlas, anotar abajo la fecha de descarga y el hash de cada archivo.
 - Si la XSD **no declara `ds:Signature`**, la verificación valida una copia del XML sin la firma
   (la firma se verifica aparte en `integridad`).
 - Si la XSD **importa esquemas externos** (por ejemplo xmldsig), guardarlos también en esta carpeta
-  y reescribir su `schemaLocation` a rutas locales: el parser corre con `no_network=True`.
+  y reescribir su `schemaLocation` a rutas relativas dentro de esta carpeta. La verificación revisa los
+  `import`/`include`/`redefine` y, si alguno apunta a una URL, a una ruta absoluta o fuera de esta
+  carpeta, devuelve `NO_VERIFICABLE` sin cargar el esquema (libxml2 no respeta `no_network` al resolverlos).
 - Con las XSD instaladas, los tests `test_muestra_valida`, `test_muestra_iso` y
   `test_falta_nodo_obligatorio` dejan de saltarse. Si la muestra no valida contra la XSD vigente,
   no aflojar la validación: reportarlo.
