@@ -55,3 +55,50 @@ def test_motor_no_postgres(cliente, monkeypatch):
 
 def test_endpoints_existentes_siguen():
     assert {'/validar-factura-pdf-base64', '/validar-factura-pdf-multipart', '/validar-factura-params'} <= {r.path for r in backend.app.routes}
+
+
+ORDEN_CANONICO = ['estructura', 'integridad', 'vigencia', 'entidad_certificadora', 'revocacion', 'cruce',
+                  'comprador']
+
+
+def test_validacion_en_orden_canonico(cliente, db_pg):  # M12a
+    registrar_muestra(db_pg)
+    j = cliente.get('/comprobantes/101616202/E310000002882', headers=KEY).json()
+    assert list(j['validacion']) == ORDEN_CANONICO
+
+
+class _DBFalsa:
+    def __init__(self):
+        self.cerrada = 0
+        self.facturas = []
+
+    def insert_factura(self, f):
+        self.facturas.append(f)
+
+    def close(self):
+        self.cerrada += 1
+
+
+class _PDFSinQR:
+    def __init__(self, ruta):
+        pass
+
+    def extract_qr_url(self):
+        return None
+
+    def extract_qr_params(self):
+        return {}
+
+
+def test_endpoints_pdf_cierran_la_conexion(monkeypatch):  # M8
+    import base64 as b64
+    monkeypatch.setattr(backend, 'API_KEYS', ['clave-prueba'])
+    monkeypatch.setattr(backend, 'PDFProcessor', _PDFSinQR)
+    dbs = []
+    monkeypatch.setattr(backend, 'get_db', lambda: dbs.append(_DBFalsa()) or dbs[-1])
+    c = TestClient(backend.app)
+    r1 = c.post('/validar-factura-pdf-base64', headers=KEY,
+                json={'pdf_base64': b64.b64encode(b'%PDF').decode()})
+    r2 = c.post('/validar-factura-pdf-multipart', headers=KEY, files={'file': ('a.pdf', b'%PDF')})
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert [d.cerrada for d in dbs] == [1, 1] and all(len(d.facturas) == 1 for d in dbs)

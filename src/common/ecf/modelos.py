@@ -25,6 +25,11 @@ DOCUMENTO_REEMPLAZADO = 'DOCUMENTO_REEMPLAZADO'
 DOCUMENTO_RECHAZADO = 'DOCUMENTO_RECHAZADO'  # solo historial interno, fuera del contrato de la API
 
 
+# Orden canónico de las 7 verificaciones del XML
+VERIFICACIONES = ('estructura', 'integridad', 'vigencia', 'entidad_certificadora',
+                  'revocacion', 'cruce', 'comprador')
+
+
 @dataclass
 class Verificacion:
     resultado: str
@@ -45,7 +50,5 @@ class ResultadoValidacionXML:
     certificado_serie: str | None = None
 
     def a_dict(self) -> dict[str, dict[str, str]]:
-        campos = ('estructura', 'integridad', 'vigencia', 'entidad_certificadora',
-                  'revocacion', 'cruce', 'comprador')
         return {c: {'resultado': getattr(self, c).resultado, 'detalle': getattr(self, c).detalle}
-                for c in campos}
+                for c in VERIFICACIONES}

@@ -18,3 +18,15 @@ def test_config_db_por_defecto_es_sqlite(monkeypatch):
 def test_config_db_postgres(monkeypatch):
     monkeypatch.setenv('DB_ENGINE', 'postgres'); monkeypatch.setenv('DB_CONNECTION_STRING', 'postgresql://u:p@h/d')
     assert leer_config_db() == ('postgres', 'postgresql://u:p@h/d')
+
+
+def test_tablas_se_crean_una_sola_vez_por_dsn(monkeypatch):  # M8
+    from conftest import TEST_DATABASE_URL
+    from db import postgres_db_wrapper as m
+    llamadas = []
+    monkeypatch.setattr(m.PostgresDBWrapper, 'create_comprobantes_tables',
+                        lambda self: llamadas.append(1))
+    monkeypatch.setattr(m, '_DSN_CON_TABLAS', set())
+    for _ in range(3):
+        m.PostgresDBWrapper(TEST_DATABASE_URL).close()
+    assert llamadas == [1]

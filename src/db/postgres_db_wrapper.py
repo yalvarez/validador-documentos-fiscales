@@ -45,9 +45,15 @@ def _valor(v):
     return Jsonb(v) if isinstance(v, (dict, list)) else v
 
 
+# DSN cuyas tablas ya se crearon en este proceso: el DDL no se repite en cada petición.
+_DSN_CON_TABLAS: set[str] = set()
+
+
 class PostgresDBWrapper(BaseDBWrapper):
     def __init__(self, conn_str):
         self.conn = psycopg.connect(conn_str, autocommit=True)
+        if conn_str in _DSN_CON_TABLAS:
+            return
         # La API y el worker pueden arrancar a la vez: CREATE TABLE IF NOT EXISTS
         # concurrente puede lanzar UniqueViolation; se reintenta.
         for intento in range(3):
@@ -60,6 +66,7 @@ class PostgresDBWrapper(BaseDBWrapper):
             except psycopg.errors.UniqueViolation:
                 if intento == 2:
                     raise
+        _DSN_CON_TABLAS.add(conn_str)
 
     def close(self):
         self.conn.close()

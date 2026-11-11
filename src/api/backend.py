@@ -14,7 +14,7 @@ from common.validator.web_validator import WebValidator
 import tempfile
 from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn, ValidarFacturaBase64In
 import base64
-from common.ecf.modelos import ZONA_RD
+from common.ecf.modelos import VERIFICACIONES, ZONA_RD
 
 API_KEYS = [k.strip() for k in os.getenv('API_KEYS', 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
 
@@ -38,6 +38,18 @@ def verify_api_key(x_api_key: str = Header(...)):
 def get_db():
     motor, config = leer_config_db()
     return get_db_wrapper(motor, config)
+
+def _cerrar_db(db):
+    if hasattr(db, 'close'):
+        db.close()
+
+
+def _guardar_factura(factura_dict):
+    db = get_db()
+    try:
+        db.insert_factura(factura_dict)
+    finally:
+        _cerrar_db(db)
 
 # def get_parametros_manager():    
 #     return ParametrosManager(get_db())
@@ -105,7 +117,6 @@ async def validar_factura_pdf_base64(
                 estado = web_result
 
     # Guardar en BD para trazabilidad
-    db = get_db()
     factura_dict = {
         'rncemisor': params.get('rncemisor') or params.get('RNCEmisor'),
         'rnccomprador': params.get('rnccomprador') or params.get('RNCComprador'),
@@ -118,7 +129,7 @@ async def validar_factura_pdf_base64(
         'razon_social_emisor': razon_social_emisor,
         'estado': estado
     }
-    db.insert_factura(factura_dict)
+    _guardar_factura(factura_dict)
 
     return ValidacionFacturaOut(
         rnc_emisor=factura_dict['rncemisor'],
@@ -164,8 +175,6 @@ async def validar_factura_pdf_multipart(
                 estado = web_result
 
     # Guardar en BD para trazabilidad
-    db = get_db()
-    
     factura_dict = {
         'rncemisor': params.get('rncemisor') or params.get('RNCEmisor'),
         'rnccomprador': params.get('rnccomprador') or params.get('RNCComprador'),
@@ -178,8 +187,7 @@ async def validar_factura_pdf_multipart(
         'razon_social_emisor': razon_social_emisor,
         'estado': estado
     }
-    
-    db.insert_factura(factura_dict)
+    _guardar_factura(factura_dict)
 
     return ValidacionFacturaOut(
         rnc_emisor=factura_dict['rncemisor'],
@@ -231,6 +239,12 @@ def validar_factura_params(
     )
 
 
+def _validacion_ordenada(detalle: dict) -> dict:
+    """Las verificaciones en el orden canónico (JSONB no conserva el orden de las claves)."""
+    claves = [k for k in VERIFICACIONES if k in detalle] + [k for k in detalle if k not in VERIFICACIONES]
+    return {k: VerificacionOut(**detalle[k]) for k in claves}
+
+
 def _a_zona_rd(fecha):
     return fecha.astimezone(ZONA_RD) if fecha is not None else None
 
@@ -246,8 +260,7 @@ def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(v
     try:
         c = db.get_comprobante(rnc_emisor, encf)
     finally:
-        if hasattr(db, 'close'):
-            db.close()
+        _cerrar_db(db)
     if c is None:
         return JSONResponse(status_code=404, content={"registrado": False})
     return ComprobanteEstadoOut(
@@ -259,7 +272,7 @@ def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(v
         ultima_consulta_dgii=_a_zona_rd(c['ultima_consulta_dgii']),
         seguimiento_activo=c['seguimiento_activo'],
         seguimiento_hasta=_a_zona_rd(c['seguimiento_hasta']),
-        validacion={k: VerificacionOut(**v) for k, v in (c['validacion_detalle'] or {}).items()},
+        validacion=_validacion_ordenada(c['validacion_detalle'] or {}),
     )
 
 
