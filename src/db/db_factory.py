@@ -8,5 +8,8 @@ def get_db_wrapper(db_type, config):
     elif db_type == 'sqlserver':
         from .sqlserver_db_wrapper import SQLServerDBWrapper
         return SQLServerDBWrapper(config)
+    elif db_type == 'postgres':
+        from .postgres_db_wrapper import PostgresDBWrapper
+        return PostgresDBWrapper(config)
     else:
         raise ValueError('Tipo de base de datos no soportado')

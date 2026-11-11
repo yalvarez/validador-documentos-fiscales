@@ -14,3 +14,6 @@ __pycache__/
 .DS_Store
 # Windows
 Thumbs.db
+
+# Entorno virtual
+.venv/

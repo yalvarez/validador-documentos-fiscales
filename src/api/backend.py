@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.schemas import ParametroOut, ParametroIn, FacturaOut, MensajeOut
 from api.parametros_manager import ParametrosManager
 from db.db_factory import get_db_wrapper
+from db.config import leer_config_db
 from common.pdf_processor.extractor import PDFProcessor
 from common.validator.web_validator import WebValidator
 import tempfile
@@ -13,8 +14,6 @@ from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaP
 import base64
 
 API_KEYS = [k.strip() for k in os.getenv('API_KEYS', 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
-DB_ENGINE = 'sqlite'
-DB_CONN_STR = './db.sqlite3'
 
 app = FastAPI(title="Validador de Facturas DGII", version="1.0")
     
@@ -34,8 +33,8 @@ def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="API Key inválida")
 
 def get_db():
-    db_config = {'db_path': DB_CONN_STR} if DB_ENGINE == 'sqlite' else DB_CONN_STR
-    return get_db_wrapper(DB_ENGINE, db_config)
+    motor, config = leer_config_db()
+    return get_db_wrapper(motor, config)
 
 # def get_parametros_manager():    
 #     return ParametrosManager(get_db())

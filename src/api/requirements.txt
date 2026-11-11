@@ -12,3 +12,6 @@ beautifulsoup4
 xmltodict
 lxml
 python-multipart
+signxml>=4
+cryptography>=43
+psycopg[binary]>=3.1
