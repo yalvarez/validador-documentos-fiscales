@@ -127,3 +127,13 @@ def test_crl_idp_de_otra_url_no_se_acepta():
 def test_crl_idp_de_la_misma_url_se_acepta():
     f = [x509.UniformResourceIdentifier(URL_CRL)]
     assert revisar(descargar=_idp(full_name=f)).detalle == 'CRL: no revocado'
+
+
+# --- ronda 3 ---
+def test_crl_idp_con_relative_name_no_se_acepta():
+    rn = x509.RelativeDistinguishedName([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, 'particion')])
+    assert revisar(descargar=_idp(relative_name=rn)).resultado == NO_VERIFICABLE
+def test_crl_delta_critica_no_se_acepta():
+    assert revisar(descargar=_crl_de({}, delta=1)).resultado == NO_VERIFICABLE
+def test_crl_delta_no_critica_no_se_acepta():
+    assert revisar(descargar=_crl_de({}, delta=1, delta_critica=False)).resultado == NO_VERIFICABLE

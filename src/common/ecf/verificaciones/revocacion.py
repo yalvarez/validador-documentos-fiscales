@@ -148,10 +148,12 @@ def _cargar_crl(datos: bytes) -> x509.CertificateRevocationList:
 def _crl_aceptable(crl, url: str) -> bool:
     """Rechaza CRL delta, parciales/con alcance distinto al del certificado y con extensiones críticas ignoradas."""
     for ext in crl.extensions:
+        if ext.oid == ExtensionOID.DELTA_CRL_INDICATOR:
+            return False  # sin importar si es crítica
         if ext.oid == ExtensionOID.ISSUING_DISTRIBUTION_POINT:
             idp = ext.value
             if (idp.only_contains_ca_certs or idp.only_contains_attribute_certs or idp.indirect_crl
-                    or idp.only_some_reasons):
+                    or idp.only_some_reasons or idp.relative_name is not None):
                 return False
             if idp.full_name is not None and url not in [
                     n.value for n in idp.full_name if isinstance(n, x509.UniformResourceIdentifier)]:
