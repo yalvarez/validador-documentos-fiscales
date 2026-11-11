@@ -1,5 +1,28 @@
 import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from .base_db_wrapper import BaseDBWrapper
+
+
+COLUMNAS_COMPROBANTE = frozenset({
+    'rnc_emisor', 'encf', 'rnc_comprador', 'tipo_ecf', 'fecha_emision', 'monto_total', 'fecha_firma',
+    'codigo_seguridad', 'razon_social_emisor', 'url_consulta',
+    'xml_contenido', 'xml_hash_sha256', 'qr_params', 'origen', 'referencia_origen',
+    'validacion_detalle', 'integridad', 'vigencia', 'entidad_certificadora', 'revocacion',
+    'certificado_titular', 'certificado_emisor', 'certificado_serie',
+    'estado', 'estado_dgii_texto', 'ultima_consulta_dgii',
+    'seguimiento_activo', 'seguimiento_hasta', 'proxima_consulta', 'intervalo_actual_min', 'intentos',
+})
+
+
+def _validar_columnas(campos):
+    desconocidas = set(campos) - COLUMNAS_COMPROBANTE
+    if desconocidas:
+        raise ValueError(f'Columnas desconocidas: {sorted(desconocidas)}')
+
+
+def _valor(v):
+    return Jsonb(v) if isinstance(v, (dict, list)) else v
 
 
 class PostgresDBWrapper(BaseDBWrapper):
@@ -12,6 +35,7 @@ class PostgresDBWrapper(BaseDBWrapper):
                 self.create_facturas_table()
                 self.create_mensajes_table()
                 self.create_parametros_table()
+                self.create_comprobantes_tables()
                 break
             except psycopg.errors.UniqueViolation:
                 if intento == 2:
@@ -126,3 +150,112 @@ class PostgresDBWrapper(BaseDBWrapper):
     def get_all_params(self):
         cur = self.conn.execute('SELECT clave, valor, descripcion, ultima_actualizacion FROM parametros')
         return cur.fetchall()
+
+    def create_comprobantes_tables(self):
+        self.conn.execute('''
+            CREATE TABLE IF NOT EXISTS comprobantes (
+                id SERIAL PRIMARY KEY,
+                rnc_emisor TEXT NOT NULL,
+                encf TEXT NOT NULL,
+                rnc_comprador TEXT,
+                tipo_ecf TEXT,
+                fecha_emision TEXT,
+                monto_total NUMERIC(18,2),
+                fecha_firma TIMESTAMPTZ,
+                codigo_seguridad TEXT,
+                razon_social_emisor TEXT,
+                url_consulta TEXT,
+                xml_contenido BYTEA NOT NULL,
+                xml_hash_sha256 TEXT NOT NULL,
+                qr_params JSONB,
+                origen TEXT NOT NULL,
+                referencia_origen TEXT,
+                validacion_detalle JSONB NOT NULL,
+                integridad TEXT,
+                vigencia TEXT,
+                entidad_certificadora TEXT,
+                revocacion TEXT,
+                certificado_titular TEXT,
+                certificado_emisor TEXT,
+                certificado_serie TEXT,
+                estado TEXT NOT NULL,
+                estado_dgii_texto TEXT,
+                ultima_consulta_dgii TIMESTAMPTZ,
+                seguimiento_activo BOOLEAN NOT NULL,
+                seguimiento_hasta TIMESTAMPTZ NOT NULL,
+                proxima_consulta TIMESTAMPTZ NOT NULL,
+                intervalo_actual_min INTEGER NOT NULL,
+                intentos INTEGER NOT NULL DEFAULT 0,
+                creado_en TIMESTAMPTZ DEFAULT now(),
+                actualizado_en TIMESTAMPTZ DEFAULT now(),
+                UNIQUE (rnc_emisor, encf)
+            )
+        ''')
+        self.conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_comprobantes_seguimiento
+            ON comprobantes (seguimiento_activo, proxima_consulta)
+        ''')
+        self.conn.execute('''
+            CREATE TABLE IF NOT EXISTS comprobante_historial (
+                id SERIAL PRIMARY KEY,
+                comprobante_id INTEGER REFERENCES comprobantes(id),
+                fecha TIMESTAMPTZ NOT NULL,
+                tipo TEXT NOT NULL,
+                estado_anterior TEXT,
+                estado_nuevo TEXT,
+                estado_dgii_texto TEXT,
+                detalle TEXT
+            )
+        ''')
+        self.conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_historial_comprobante
+            ON comprobante_historial (comprobante_id)
+        ''')
+
+    def _filas(self, query, params=None):
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(query, params)
+            return cur.fetchall()
+
+    def get_comprobante(self, rnc_emisor, encf):
+        filas = self._filas(
+            'SELECT * FROM comprobantes WHERE rnc_emisor = %s AND encf = %s',
+            (rnc_emisor.strip().upper(), encf.strip().upper()))
+        return filas[0] if filas else None
+
+    def insert_comprobante(self, campos):
+        _validar_columnas(campos)
+        columnas = list(campos)
+        cur = self.conn.execute(
+            f"INSERT INTO comprobantes ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))}) "
+            'ON CONFLICT (rnc_emisor, encf) DO NOTHING RETURNING id',
+            [_valor(campos[c]) for c in columnas])
+        fila = cur.fetchone()
+        return fila[0] if fila else None
+
+    def update_comprobante(self, id, campos):
+        _validar_columnas(campos)
+        asignaciones = [f'{c} = %s' for c in campos] + ['actualizado_en = now()']
+        self.conn.execute(
+            f"UPDATE comprobantes SET {', '.join(asignaciones)} WHERE id = %s",
+            [_valor(v) for v in campos.values()] + [id])
+
+    def insert_historial(self, id, tipo, estado_anterior=None, estado_nuevo=None,
+                         estado_dgii_texto=None, detalle=None, fecha=None):
+        self.conn.execute(
+            'INSERT INTO comprobante_historial '
+            '(comprobante_id, fecha, tipo, estado_anterior, estado_nuevo, estado_dgii_texto, detalle) '
+            'VALUES (%s, COALESCE(%s, now()), %s, %s, %s, %s, %s)',
+            (id, fecha, tipo, estado_anterior, estado_nuevo, estado_dgii_texto, detalle))
+
+    def get_historial(self, id):
+        return self._filas(
+            'SELECT * FROM comprobante_historial WHERE comprobante_id = %s ORDER BY fecha, id', (id,))
+
+    def get_comprobantes_por_consultar(self, ahora, limite=100):
+        return self._filas(
+            'SELECT * FROM comprobantes WHERE seguimiento_activo AND proxima_consulta <= %s '
+            'ORDER BY proxima_consulta, id LIMIT %s', (ahora, limite))
+
+    def transaccion(self):
+        return self.conn.transaction()

@@ -61,3 +61,17 @@ def fijo(r: RespuestaDGII) -> Callable[[str], RespuestaDGII]:
 
 def fixture_dgii(nombre: str) -> str:
     return (RAIZ / 'tests/ecf/fixtures/dgii' / nombre).read_text(encoding='utf-8')
+
+
+# --- Tarea 9: comprobantes ---
+def campos_minimos(encf: str = 'E310000002882', **cambios) -> dict:
+    """Todas las columnas NOT NULL de `comprobantes`, con valores válidos."""
+    campos = {
+        'rnc_emisor': '101616202', 'encf': encf, 'xml_contenido': MUESTRA_XML,
+        'xml_hash_sha256': 'a' * 64, 'origen': 'api', 'validacion_detalle': {},
+        'estado': 'PENDIENTE', 'seguimiento_activo': True,
+        'seguimiento_hasta': T0 + timedelta(hours=72),
+        'proxima_consulta': T0 + timedelta(minutes=60), 'intervalo_actual_min': 120,
+    }
+    campos.update(cambios)
+    return campos

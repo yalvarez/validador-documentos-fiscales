@@ -25,3 +25,19 @@ class BaseDBWrapper:
         raise NotImplementedError
     def get_all_params(self):
         raise NotImplementedError
+    def create_comprobantes_tables(self):
+        raise NotImplementedError
+    def get_comprobante(self, rnc_emisor, encf):
+        raise NotImplementedError
+    def insert_comprobante(self, campos):
+        raise NotImplementedError
+    def update_comprobante(self, id, campos):
+        raise NotImplementedError
+    def insert_historial(self, id, tipo, estado_anterior=None, estado_nuevo=None, estado_dgii_texto=None, detalle=None, fecha=None):
+        raise NotImplementedError
+    def get_historial(self, id):
+        raise NotImplementedError
+    def get_comprobantes_por_consultar(self, ahora, limite=100):
+        raise NotImplementedError
+    def transaccion(self):
+        raise NotImplementedError
