@@ -33,3 +33,15 @@ def test_sin_certificado_ni_fecha_firma():
 def test_xml_mal_formado():
     with pytest.raises(ErrorLecturaECF):
         leer_ecf(b'<ECF><Encabezado>')
+
+
+@pytest.mark.parametrize('texto', ['NaN', 'Infinity', '-Infinity', 'sNaN', '1E+20', '10000000000000000',
+                                   '-1E16', '9999999999999999.995'])
+def test_monto_no_finito_o_fuera_de_numeric_18_2_es_none(texto):  # T2
+    xml = MUESTRA_XML.replace(b'<MontoTotal>1250</MontoTotal>', f'<MontoTotal>{texto}</MontoTotal>'.encode())
+    assert leer_ecf(xml).monto_total is None
+
+
+def test_monto_grande_dentro_de_numeric_18_2():  # T2
+    xml = MUESTRA_XML.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9999999999999999.99</MontoTotal>')
+    assert leer_ecf(xml).monto_total == Decimal('9999999999999999.99')

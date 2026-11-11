@@ -2,7 +2,7 @@ import base64
 import binascii
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from lxml import etree
 
@@ -98,6 +98,24 @@ def certificados_keyinfo(raiz) -> list[bytes]:
     return certs
 
 
+_LIMITE_NUMERIC_18_2 = Decimal('1E16')
+
+
+def _monto_numeric_18_2(texto: str | None) -> Decimal | None:
+    """Monto que cabe en NUMERIC(18,2) (finito y |x| < 1e16 tras redondear a 2 decimales); si no, None."""
+    if not texto:
+        return None
+    try:
+        monto = Decimal(texto)
+        if not monto.is_finite() or abs(monto) >= _LIMITE_NUMERIC_18_2:
+            return None
+        if abs(monto.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) >= _LIMITE_NUMERIC_18_2:
+            return None
+    except InvalidOperation:
+        return None
+    return monto
+
+
 def leer_ecf(xml_bytes: bytes) -> DatosECF:
     raiz = parsear_ecf(xml_bytes)
 
@@ -106,13 +124,7 @@ def leer_ecf(xml_bytes: bytes) -> DatosECF:
     if not rnc or not encf:
         raise ErrorLecturaECF('Falta RNCEmisor o eNCF')
 
-    monto = None
-    monto_txt = _texto(raiz, 'MontoTotal')
-    if monto_txt:
-        try:
-            monto = Decimal(monto_txt)
-        except InvalidOperation:
-            monto = None
+    monto = _monto_numeric_18_2(_texto(raiz, 'MontoTotal'))
 
     fecha_firma_texto = _texto(raiz, 'FechaHoraFirma')
     fecha_firma = None
