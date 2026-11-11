@@ -190,3 +190,23 @@ def firmar_crl(firmante_key, firmante_cert, revocados: dict, next_update: dateti
             rb = rb.add_extension(x509.CRLReason(razones[serie]), critical=False)
         b = b.add_revoked_certificate(rb.build())
     return b.sign(firmante_key, hashes.SHA256()).public_bytes(Encoding.PEM if pem else Encoding.DER)
+
+
+def crear_hoja_con_usos(emisor_key, emisor_cert, key_usage: dict | None = None, eku: list | None = None):
+    """Hoja (vigencia 2020-2040) con KeyUsage (`key_usage`: banderas a True) y/o EKU opcionales."""
+    key = _clave()
+    b = (x509.CertificateBuilder()
+         .subject_name(_nombre('FIRMANTE USOS', 'PRUEBA', 'PERSONAS'))
+         .issuer_name(emisor_cert.subject).public_key(key.public_key())
+         .serial_number(x509.random_serial_number())
+         .not_valid_before(_INICIO).not_valid_after(_FIN)
+         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True))
+    if key_usage is not None:
+        banderas = dict(digital_signature=False, content_commitment=False, key_encipherment=False,
+                        data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
+                        encipher_only=False, decipher_only=False)
+        banderas.update(key_usage)
+        b = b.add_extension(x509.KeyUsage(**banderas), critical=True)
+    if eku is not None:
+        b = b.add_extension(x509.ExtendedKeyUsage(eku), critical=False)
+    return key, b.sign(emisor_key, hashes.SHA256())

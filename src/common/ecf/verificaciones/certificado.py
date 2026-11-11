@@ -1,5 +1,7 @@
 """Verificaciones del certificado del firmante: vigencia y entidad certificadora autorizada."""
 import logging
+import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -7,7 +9,7 @@ from typing import Callable
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
+from cryptography.x509.oid import AuthorityInformationAccessOID, ExtendedKeyUsageOID, NameOID
 
 from common.ecf.modelos import FALLO, OK, Verificacion
 
@@ -16,12 +18,33 @@ logger = logging.getLogger(__name__)
 _MAX_PROFUNDIDAD = 8
 _EXTENSIONES_CA = ('.pem', '.crt', '.cer', '.der')
 
-# Caché de certificados descargados por la URL CA Issuers del AIA
-_cache_aia: dict[str, x509.Certificate] = {}
+# Caché acotada de certificados descargados por la URL CA Issuers del AIA:
+# url -> (certificado, instante de descarga). Se descarta la más antigua y expira a las 24 h.
+_MAX_CACHE_AIA = 256
+_EXPIRACION_AIA_SEG = 24 * 3600
+_cache_aia: 'OrderedDict[str, tuple[x509.Certificate, float]]' = OrderedDict()
+_reloj = time.monotonic
 
 
 def limpiar_caches() -> None:
     _cache_aia.clear()
+
+
+def _de_cache_aia(url: str) -> x509.Certificate | None:
+    entrada = _cache_aia.get(url)
+    if entrada is None:
+        return None
+    if _reloj() - entrada[1] >= _EXPIRACION_AIA_SEG:
+        del _cache_aia[url]
+        return None
+    return entrada[0]
+
+
+def _a_cache_aia(url: str, cert: x509.Certificate) -> None:
+    _cache_aia.pop(url, None)
+    _cache_aia[url] = (cert, _reloj())
+    while len(_cache_aia) > _MAX_CACHE_AIA:
+        _cache_aia.popitem(last=False)
 
 
 def cargar_certificado(data: bytes) -> x509.Certificate:
@@ -102,6 +125,26 @@ def _puede_emitir(padre: x509.Certificate, debajo: int) -> bool:
     return bc.path_length is None or debajo <= bc.path_length
 
 
+_EKU_NO_FIRMA = frozenset({ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.OCSP_SIGNING})
+
+
+def _apto_para_firma(cert: x509.Certificate) -> bool:
+    """KeyUsage (si existe) con digitalSignature o nonRepudiation; EKU (si existe) no solo serverAuth/OCSPSigning."""
+    try:
+        ku = cert.extensions.get_extension_for_class(x509.KeyUsage).value
+        if not (ku.digital_signature or ku.content_commitment):
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    try:
+        eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        if set(eku) <= _EKU_NO_FIRMA:
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    return True
+
+
 def _urls_ca_issuers(cert: x509.Certificate) -> list[str]:
     try:
         aia = cert.extensions.get_extension_for_class(x509.AuthorityInformationAccess).value
@@ -118,13 +161,15 @@ def _emisores_aia(cert, descargar: Callable[[str], bytes] | None):
     if descargar is None:
         return
     for url in _urls_ca_issuers(cert):
-        if url not in _cache_aia:
+        emisor = _de_cache_aia(url)
+        if emisor is None:
             try:
-                _cache_aia[url] = cargar_certificado(descargar(url))
+                emisor = cargar_certificado(descargar(url))
             except Exception:  # noqa: BLE001 - red o formato: la cadena simplemente no se completa
                 logger.warning('No se pudo descargar el emisor AIA %s', url)
                 continue
-        yield _cache_aia[url]
+            _a_cache_aia(url, emisor)
+        yield emisor
 
 
 def verificar_entidad_certificadora(
@@ -138,6 +183,8 @@ def verificar_entidad_certificadora(
     """
     if cert is None:
         return Verificacion(FALLO, 'Sin certificado'), None
+    if not _apto_para_firma(cert):
+        return Verificacion(FALLO, 'Uso de clave no apto para firma'), None
     anclas = _cargar_anclas(ca_dir)
     if not anclas:
         return Verificacion(FALLO, 'Sin certificados de confianza configurados'), None

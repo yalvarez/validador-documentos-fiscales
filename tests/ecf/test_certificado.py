@@ -168,3 +168,78 @@ def test_aia_solo_http(tmp_path):
     v, _ = verificar_entidad_certificadora(hoja, [], tmp_path,
                                            lambda u: llamadas.append(u) or b'')
     assert v.resultado == FALLO and llamadas == []
+
+
+import pytest  # noqa: E402
+from cryptography.x509.oid import ExtendedKeyUsageOID as EKU  # noqa: E402
+
+from pki import crear_hoja_con_usos  # noqa: E402
+
+
+def _entidad_con_usos(tmp_path, **usos):
+    ca_k, ca_c = crear_ca('CA USOS')
+    (tmp_path / 'ca.pem').write_bytes(ca_c.public_bytes(Encoding.PEM))
+    _, hoja = crear_hoja_con_usos(ca_k, ca_c, **usos)
+    return verificar_entidad_certificadora(hoja, [], tmp_path)[0]
+
+
+@pytest.mark.parametrize('usos', [
+    dict(key_usage={'key_encipherment': True}),
+    dict(key_usage={'key_cert_sign': True, 'crl_sign': True}),
+    dict(eku=[EKU.SERVER_AUTH]),
+    dict(eku=[EKU.OCSP_SIGNING]),
+    dict(eku=[EKU.SERVER_AUTH, EKU.OCSP_SIGNING]),
+    dict(key_usage={'digital_signature': True}, eku=[EKU.SERVER_AUTH]),
+])
+def test_uso_de_clave_no_apto_para_firma(tmp_path, usos):  # M10
+    v = _entidad_con_usos(tmp_path, **usos)
+    assert v.resultado == FALLO and v.detalle == 'Uso de clave no apto para firma'
+
+
+@pytest.mark.parametrize('usos', [
+    dict(),
+    dict(key_usage={'digital_signature': True}),
+    dict(key_usage={'content_commitment': True}),
+    dict(eku=[EKU.CLIENT_AUTH, EKU.EMAIL_PROTECTION]),
+    dict(key_usage={'content_commitment': True}, eku=[EKU.SERVER_AUTH, EKU.CLIENT_AUTH]),
+])
+def test_uso_de_clave_apto_para_firma(tmp_path, usos):  # M10
+    assert _entidad_con_usos(tmp_path, **usos).resultado == OK
+
+
+def _aia_escenario(tmp_path):
+    ca_k, ca = crear_ca('Raiz')
+    int_k, inter = crear_intermedio(ca_k, ca, 'Emisora')
+    (tmp_path / 'raiz.pem').write_bytes(ca.public_bytes(Encoding.PEM))
+    _, hoja = crear_hoja(int_k, inter, AYER, MANANA, ca_issuers_url='http://aia.prueba/emisora.crt')
+    descargas = []
+
+    def descargar(u):
+        descargas.append(u)
+        return inter.public_bytes(Encoding.DER)
+    return hoja, descargar, descargas
+
+
+def test_cache_aia_expira_a_las_24h(tmp_path, monkeypatch):  # M11
+    hoja, descargar, descargas = _aia_escenario(tmp_path)
+    instante = [1000.0]
+    monkeypatch.setattr(certificado, '_reloj', lambda: instante[0])
+    verificar_entidad_certificadora(hoja, [], tmp_path, descargar)
+    instante[0] += 24 * 3600 - 1
+    verificar_entidad_certificadora(hoja, [], tmp_path, descargar)
+    assert len(descargas) == 1
+    instante[0] += 1
+    v, _ = verificar_entidad_certificadora(hoja, [], tmp_path, descargar)
+    assert v.resultado == OK and len(descargas) == 2
+
+
+def test_cache_aia_acotada_descarta_la_mas_antigua(tmp_path):  # M11
+    hoja, descargar, descargas = _aia_escenario(tmp_path)
+    verificar_entidad_certificadora(hoja, [], tmp_path, descargar)
+    _, otro = crear_ca('Otro')
+    for i in range(certificado._MAX_CACHE_AIA):
+        certificado._a_cache_aia(f'http://aia.prueba/{i}.crt', otro)
+    assert len(certificado._cache_aia) == certificado._MAX_CACHE_AIA
+    assert 'http://aia.prueba/emisora.crt' not in certificado._cache_aia
+    verificar_entidad_certificadora(hoja, [], tmp_path, descargar)
+    assert len(descargas) == 2 and len(certificado._cache_aia) == certificado._MAX_CACHE_AIA
