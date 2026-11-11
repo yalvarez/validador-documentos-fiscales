@@ -34,17 +34,22 @@ class DatosECF:
 
 
 _SIN_FIRMA = "[not(ancestor::*[local-name()='Signature'])]"
-_RUTA_CERTS = ("*[local-name()='Signature'][1]/*[local-name()='KeyInfo']"
-               "/*[local-name()='X509Data']/*[local-name()='X509Certificate']")
+_NS = {'ds': 'http://www.w3.org/2000/09/xmldsig#'}
+_RUTA_FIRMA = 'ds:Signature[1]'  # hija directa de la raíz, en el namespace dsig
+_RUTA_CERTS = f'{_RUTA_FIRMA}/ds:KeyInfo/ds:X509Data/ds:X509Certificate'
+
+
+def texto_completo(nodo) -> str:
+    """Texto completo del elemento; los comentarios y PI no lo truncan (no los cubre la firma)."""
+    return ''.join(nodo.xpath('.//text()')).strip()
 
 
 def _texto(raiz, nombre: str) -> str | None:
     """Campo de negocio: ignora todo lo que esté dentro de una Signature (no firmado)."""
     nodos = raiz.xpath(f"//*[local-name()='{nombre}']{_SIN_FIRMA}")
-    if not nodos or nodos[0].text is None:
+    if not nodos:
         return None
-    t = nodos[0].text.strip()
-    return t or None
+    return texto_completo(nodos[0]) or None
 
 
 def leer_ecf(xml_bytes: bytes) -> DatosECF:
@@ -76,14 +81,14 @@ def leer_ecf(xml_bytes: bytes) -> DatosECF:
             fecha_firma = None
 
     # Solo la Signature hija directa de la raíz (la única que integridad acepta).
-    nodos_sig = raiz.xpath("*[local-name()='Signature'][1]/*[local-name()='SignatureValue']")
-    sig = (nodos_sig[0].text or '').strip() if nodos_sig else None
+    nodos_sig = raiz.xpath(f'{_RUTA_FIRMA}/ds:SignatureValue', namespaces=_NS)
+    sig = texto_completo(nodos_sig[0]) if nodos_sig else None
     sig = ''.join(sig.split()) if sig else None
 
     certs = []
-    for nodo in raiz.xpath(_RUTA_CERTS):
+    for nodo in raiz.xpath(_RUTA_CERTS, namespaces=_NS):
         try:
-            certs.append(base64.b64decode(''.join((nodo.text or '').split()), validate=True))
+            certs.append(base64.b64decode(''.join(texto_completo(nodo).split()), validate=True))
         except (binascii.Error, ValueError):
             continue
 

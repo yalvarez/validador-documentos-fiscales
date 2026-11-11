@@ -3,7 +3,7 @@ import base64
 from lxml import etree
 from signxml import XMLVerifier
 
-from common.ecf.lectura import normalizar_xml_bytes
+from common.ecf.lectura import normalizar_xml_bytes, texto_completo
 from common.ecf.modelos import FALLO, OK, Verificacion
 
 NS_DSIG = 'http://www.w3.org/2000/09/xmldsig#'
@@ -28,9 +28,9 @@ def verificar_integridad(xml_bytes: bytes) -> Verificacion:
             return Verificacion(
                 FALLO, f'La firma no cubre el documento completo (Reference URI={uris})')
         nodos = firma[0].xpath('ds:KeyInfo/ds:X509Data/ds:X509Certificate', namespaces=ns)
-        if not nodos or not (nodos[0].text or '').strip():
+        if not nodos or not texto_completo(nodos[0]):
             return Verificacion(FALLO, 'Sin certificado incrustado')
-        der = base64.b64decode(''.join(nodos[0].text.split()))
+        der = base64.b64decode(''.join(texto_completo(nodos[0]).split()))
         pem = (b'-----BEGIN CERTIFICATE-----\n'
                + base64.encodebytes(der) + b'-----END CERTIFICATE-----\n')
         verificador = XMLVerifier()

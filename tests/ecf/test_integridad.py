@@ -108,3 +108,15 @@ def test_certificado_suelto_fuera_de_keyinfo_no_se_lee():
     otro.text = 'BBBB'
     d = leer_ecf(etree.tostring(raiz))
     assert len(d.certificados_der) == 1 and d.certificados_der[0] != b'\x00\x00\x00'
+
+
+def test_comentarios_en_campos_no_truncan_la_lectura():
+    from decimal import Decimal
+    from common.ecf.lectura import leer_ecf
+    xml = ecf_de_prueba('E310000000001')
+    assert b'<MontoTotal>1250</MontoTotal>' in xml
+    alterado = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>1<!---->250</MontoTotal>')
+    alterado = alterado.replace(b'<eNCF>E310000000001</eNCF>', b'<eNCF>E31<!--x-->0000000001</eNCF>')
+    assert verificar_integridad(alterado).resultado == OK  # los comentarios no los cubre la firma
+    d = leer_ecf(alterado)
+    assert d.monto_total == Decimal('1250') and d.encf == 'E310000000001'
