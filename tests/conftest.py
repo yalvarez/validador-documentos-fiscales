@@ -11,7 +11,7 @@ from db.postgres_db_wrapper import PostgresDBWrapper
 
 TEST_DATABASE_URL = os.getenv(
     'TEST_DATABASE_URL',
-    'postgresql://validador:validador@localhost:5433/validador_test',
+    'postgresql://validador:validador@127.0.0.1:5433/validador_test',
 )
 
 MODULOS_CON_CACHES = (
