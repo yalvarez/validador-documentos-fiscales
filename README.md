@@ -146,7 +146,11 @@ Si faltan o no son válidos se usa el valor por defecto y se registra un aviso e
 
 ### Agregar una entidad certificadora
 
-1. Obtener el certificado (formato PEM o DER) de la entidad certificadora dominicana que emite los certificados de firma (el intermedio dominicano, no una raíz extranjera compartida) desde una fuente oficial, por ejemplo la lista de INDOTEL.
+Hoy se confía en las tres entidades que la DGII indica como emisoras de certificados para e-CF:
+Viafirma, Digifirma (Cámara de Comercio y Producción de Santo Domingo) y Novofirma (Novosit).
+El detalle y la fuente están en `src/common/ecf/confianza/FUENTE.md`. Si la DGII agrega otra:
+
+1. Obtener el certificado (formato PEM o DER) de la entidad certificadora dominicana que emite los certificados de firma (el intermedio dominicano, no una raíz extranjera compartida) desde una fuente oficial.
 2. Guardarlo en `src/common/ecf/confianza/` (o en la carpeta de `CA_CONFIANZA_DIR`) como `<entidad>.pem`.
 3. Anotar en `src/common/ecf/confianza/FUENTE.md` el sujeto, el SHA-256, la fuente y la fecha de descarga.
 
@@ -154,8 +158,10 @@ Cada certificado de la carpeta es un ancla que se compara por huella SHA-256 exa
 
 ### Instalar las XSD oficiales de la DGII
 
-Las XSD no vienen incluidas; sin ellas la verificación `estructura` da `NO_VERIFICABLE`. Descargarlas con un navegador
-desde el sitio de la DGII y guardarlas en `src/common/ecf/xsd/` como `e-CF-<tipo>.xsd` (tipos 31, 32, 33, 34, 41, 43, 44, 45, 46 y 47).
+Las 10 XSD oficiales (tipos 31, 32, 33, 34, 41, 43, 44, 45, 46 y 47) están instaladas en `src/common/ecf/xsd/`
+como `e-CF-<tipo>.xsd` (descargadas el 2026-11-11). La del tipo 31 lleva una corrección mínima porque la publicada
+no compila. Para actualizarlas, descargarlas con un navegador desde el sitio de la DGII y reemplazar los archivos;
+sin la XSD de un tipo, la verificación `estructura` de ese tipo da `NO_VERIFICABLE`.
 Las instrucciones completas, incluido el manejo de esquemas importados, están en `src/common/ecf/xsd/FUENTE.md`.
 
 ## Ejemplos de consumo
