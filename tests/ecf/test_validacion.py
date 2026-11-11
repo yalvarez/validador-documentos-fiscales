@@ -279,3 +279,16 @@ def test_http_comprueba_el_host_de_la_peticion_preparada(monkeypatch):
     assert falso.llamadas == []
     assert http_descargar('http://publico.x/a') == b'ok'
     assert falso.llamadas[0][1] == 'http://publico.x/a'
+
+
+def test_http_ignora_proxies_del_entorno(monkeypatch):  # T7
+    class _SinEntorno(_Requests):
+        trust_env = True
+
+        def send(self, prepared, **kw):
+            self.trust_env_al_enviar = self.trust_env
+            return super().send(prepared, **kw)
+    falso = _SinEntorno(b'ok')
+    monkeypatch.setattr(validacion, 'requests', falso)
+    assert http_descargar('http://cps.viafirma.do/a.crt') == b'ok'
+    assert falso.trust_env_al_enviar is False

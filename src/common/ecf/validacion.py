@@ -89,6 +89,7 @@ def _enviar(metodo: str, url: str, maximo: int, **kw) -> bytes:
     preparada = requests.Request(metodo, url, **kw).prepare()
     _validar_url(preparada.url)
     with requests.Session() as sesion:
+        sesion.trust_env = False  # un proxy del entorno no puede saltarse la comprobación de IP
         resp = sesion.send(preparada, allow_redirects=False, timeout=TIMEOUT_HTTP, stream=True)
         return _leer_acotado(resp, maximo, inicio)
 
