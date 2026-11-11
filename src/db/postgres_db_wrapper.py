@@ -243,6 +243,12 @@ class PostgresDBWrapper(BaseDBWrapper):
             (rnc_emisor.strip().upper(), encf.strip().upper()))
         return filas[0] if filas else None
 
+    def get_comprobante_por_id(self, id, bloquear=False):
+        """Fila por id; con `bloquear` (dentro de una transacción) la toma con SELECT ... FOR UPDATE."""
+        consulta = 'SELECT * FROM comprobantes WHERE id = %s' + (' FOR UPDATE' if bloquear else '')
+        filas = self._filas(consulta, (id,))
+        return filas[0] if filas else None
+
     def insert_comprobante(self, campos):
         campos = _preparar(campos)
         columnas = list(campos)

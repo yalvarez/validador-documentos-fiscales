@@ -31,7 +31,8 @@ def main() -> None:
             parametros = ParametrosManager(db)
             cfg = config_seguimiento_desde_parametros(parametros)
             espera = cfg.ciclo_seg
-            n = procesar_ciclo(db, datetime.now(ZONA_RD), cfg, config_validacion_desde_parametros(parametros))
+            n = procesar_ciclo(db, datetime.now(ZONA_RD), cfg, config_validacion_desde_parametros(parametros),
+                               reloj=lambda: datetime.now(ZONA_RD))
             logging.info('Ciclo: %d comprobantes', n)
         except Exception:  # noqa: BLE001 - el worker nunca debe morir
             logging.exception('Falla en el ciclo de seguimiento')

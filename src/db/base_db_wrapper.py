@@ -29,6 +29,8 @@ class BaseDBWrapper:
         raise NotImplementedError
     def get_comprobante(self, rnc_emisor, encf):
         raise NotImplementedError
+    def get_comprobante_por_id(self, id, bloquear=False):
+        raise NotImplementedError
     def insert_comprobante(self, campos):
         raise NotImplementedError
     def update_comprobante(self, id, campos):

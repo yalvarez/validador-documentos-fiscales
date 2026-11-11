@@ -73,3 +73,11 @@ def test_fecha_sin_zona_rechazada(db_pg):
         db_pg.insert_historial(cid, 'CONSULTA', fecha=ingenua)
     with pytest.raises(ValueError):
         db_pg.get_comprobantes_por_consultar(ingenua)
+
+
+def test_get_comprobante_por_id_con_bloqueo(db_pg):
+    cid = db_pg.insert_comprobante(campos_minimos())
+    assert db_pg.get_comprobante_por_id(cid)['encf'] == 'E310000002882'
+    with db_pg.transaccion():
+        assert db_pg.get_comprobante_por_id(cid, bloquear=True)['id'] == cid
+    assert db_pg.get_comprobante_por_id(cid + 1000) is None
