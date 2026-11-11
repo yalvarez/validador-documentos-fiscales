@@ -9,8 +9,8 @@ from typing import Callable
 from api.parametros_manager import ParametrosManager
 from common.ecf.dgii import RespuestaDGII, construir_url_consulta, consultar_dgii
 from common.ecf.lectura import leer_ecf
-from common.ecf.modelos import (CAMBIO_ESTADO, DOCUMENTO_RECHAZADO, DOCUMENTO_REEMPLAZADO, OK, PENDIENTE,
-                                REGISTRO, ZONA_RD, ResultadoValidacionXML)
+from common.ecf.modelos import (CAMBIO_ESTADO, DOCUMENTO_RECHAZADO, DOCUMENTO_REEMPLAZADO, FALLO, OK,
+                                PENDIENTE, REGISTRO, ZONA_RD, ResultadoValidacionXML)
 from common.ecf.seguimiento import (ConfigSeguimiento, calendario_inicial, config_seguimiento_desde_parametros,
                                     decidir)
 from common.ecf.validacion import ConfigValidacion, config_validacion_desde_parametros, validar_xml
@@ -40,6 +40,15 @@ def extraer_qr_params(pdf_bytes: bytes) -> dict | None:
                 pass
 
 
+def admite_reemplazo(r: ResultadoValidacionXML) -> bool:
+    """Un XML distinto solo reemplaza al guardado si su firma y certificado son válidos.
+
+    Revocación NO_VERIFICABLE se admite (sin red no hay respuesta); FALLO no. Tampoco un comprador FALLO.
+    """
+    return (all(getattr(r, c).resultado == OK for c in ('integridad', 'vigencia', 'entidad_certificadora'))
+            and r.revocacion.resultado != FALLO and r.comprador.resultado != FALLO)
+
+
 def campos_de_validacion(r: ResultadoValidacionXML) -> dict:
     return {
         'validacion_detalle': r.a_dict(),
@@ -54,7 +63,11 @@ def campos_de_validacion(r: ResultadoValidacionXML) -> dict:
 
 
 def _consultar_y_aplicar(db, cid, d, url, consultar, ahora, cfg) -> None:
-    """Consulta la DGII fuera de toda transacción y aplica el resultado (sin tocar el calendario)."""
+    """Consulta la DGII fuera de toda transacción y aplica el resultado (sin tocar el calendario).
+
+    Excepción: si el seguimiento está inactivo (reemplazo de un comprobante ya cerrado) y la consulta
+    falla, se reactiva solo para reintentar el cierre: la regla de cierre con errores lo resuelve.
+    """
     try:
         resp = consultar(url)
     except Exception as e:  # noqa: BLE001 - un fallo inesperado no debe perder el registro
@@ -62,8 +75,14 @@ def _consultar_y_aplicar(db, cid, d, url, consultar, ahora, cfg) -> None:
         resp = RespuestaDGII('ERROR', detalle=repr(e))
     with db.transaccion():
         fila = db.get_comprobante(d.rnc_emisor, d.encf)
+        reactivar = resp.tipo == 'ERROR' and not fila['seguimiento_activo']
+        if reactivar:
+            fila = {**fila, 'seguimiento_hasta': ahora}
         dec = decidir(fila, resp, ahora, cfg)
-        db.update_comprobante(cid, {k: v for k, v in dec.campos.items() if k in _CAMPOS_PRIMERA_CONSULTA})
+        cambios = {k: v for k, v in dec.campos.items() if k in _CAMPOS_PRIMERA_CONSULTA}
+        if reactivar:
+            cambios.update(seguimiento_activo=True, seguimiento_hasta=ahora, proxima_consulta=ahora)
+        db.update_comprobante(cid, cambios)
         for e in dec.eventos:
             db.insert_historial(cid, e.tipo, e.estado_anterior, e.estado_nuevo,
                                 e.estado_dgii_texto, e.detalle, fecha=ahora)
@@ -85,7 +104,13 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
 
     d = leer_ecf(xml_bytes)
     qr = extraer_qr_params(pdf_bytes) if pdf_bytes else None
-    r = validar_xml(xml_bytes, qr, cfg_val, ahora)
+    if qr is None:
+        # Sin PDF nuevo se cruza contra el QR ya guardado: un reenvío sin PDF no borra un cruce previo.
+        existente = db.get_comprobante(d.rnc_emisor, d.encf)
+        qr_validacion = existente['qr_params'] if existente else None
+    else:
+        qr_validacion = qr
+    r = validar_xml(xml_bytes, qr_validacion, cfg_val, ahora)
 
     url = construir_url_consulta(d)
     hash_nuevo = hashlib.sha256(xml_bytes).hexdigest()
@@ -117,7 +142,7 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
                 if qr:
                     cambios['qr_params'] = qr
                 db.update_comprobante(cid, cambios)
-            elif all(getattr(r, c).resultado == OK for c in ('integridad', 'vigencia', 'entidad_certificadora')):
+            elif admite_reemplazo(r):
                 cambios = {k: v for k, v in campos.items()
                            if k not in ('origen', 'referencia_origen')
                            and not (k in ('razon_social_emisor', 'qr_params') and v is None)}
@@ -134,7 +159,8 @@ def registrar_comprobante(db, xml_bytes: bytes, pdf_bytes: bytes | None = None, 
             else:
                 detalle = (f"hash nuevo {hash_nuevo[:8]}; integridad={r.integridad.resultado}; "
                            f"vigencia={r.vigencia.resultado}; "
-                           f"entidad_certificadora={r.entidad_certificadora.resultado}")
+                           f"entidad_certificadora={r.entidad_certificadora.resultado}; "
+                           f"revocacion={r.revocacion.resultado}; comprador={r.comprador.resultado}")
                 db.insert_historial(cid, DOCUMENTO_RECHAZADO, detalle=detalle, fecha=ahora)
         if reemplazado:
             _consultar_y_aplicar(db, cid, d, url, consultar, ahora, cfg)

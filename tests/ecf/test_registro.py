@@ -135,3 +135,76 @@ def test_normaliza_identificacion(db_pg):  # Foco 3
 
 def test_xml_ilegible(db_pg):
     with pytest.raises(ErrorLecturaECF): reg(db_pg, b'basura')
+
+
+def test_reenvio_sin_pdf_conserva_cruce_fallo(db_pg, monkeypatch):  # I2
+    monkeypatch.setattr(registro, 'extraer_qr_params', lambda b: {**QR_MUESTRA, 'MontoTotal': '9999'})
+    a = reg(db_pg, pdf_bytes=b'%PDF')
+    assert a['validacion_detalle']['cruce']['resultado'] == FALLO
+    b = reg(db_pg, ahora=T0 + timedelta(hours=1))
+    assert b['validacion_detalle']['cruce']['resultado'] == FALLO
+    assert b['qr_params'] == a['qr_params']
+
+
+def _reemplazo(encf: str) -> bytes:
+    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', f'<eNCF>{encf}</eNCF>'.encode())
+    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    return firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0)
+
+
+def test_reemplazo_sin_pdf_usa_qr_guardado(db_pg, tmp_path, monkeypatch):  # I2, rama de reemplazo
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    original = ecf_de_prueba('E310000000020')
+    d = leer_ecf(original)
+    qr = {'RncEmisor': d.rnc_emisor, 'RncComprador': d.rnc_comprador, 'ENCF': d.encf,
+          'FechaEmision': d.fecha_emision_texto, 'MontoTotal': str(d.monto_total),
+          'FechaFirma': d.fecha_firma_texto, 'CodigoSeguridad': d.codigo_seguridad}
+    monkeypatch.setattr(registro, 'extraer_qr_params', lambda b: qr)
+    a = reg(db_pg, original, config_validacion=cfg, pdf_bytes=b'%PDF')
+    assert a['validacion_detalle']['cruce']['resultado'] == OK
+    b = reg(db_pg, _reemplazo('E310000000020'), config_validacion=cfg, ahora=T0 + timedelta(hours=1))
+    assert b['monto_total'] == Decimal('9250')
+    assert b['validacion_detalle']['cruce']['resultado'] == FALLO and b['qr_params'] == a['qr_params']
+
+
+def test_reemplazo_con_comprador_fallo_se_rechaza(db_pg, tmp_path):  # I3
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000021'), config_validacion=cfg)
+    b = reg(db_pg, _reemplazo('E310000000021'), config_validacion=config_con(ca_dir=tmp_path, rnc_terpel='999999999'),
+            ahora=T0 + timedelta(hours=1))
+    assert b['xml_hash_sha256'] == a['xml_hash_sha256'] and b['monto_total'] == a['monto_total']
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
+    assert 'comprador=FALLO' in db_pg.get_historial(a['id'])[-1]['detalle']
+
+
+def test_reemplazo_con_certificado_revocado_se_rechaza(db_pg, tmp_path):  # I3
+    from ayudantes import CA_PRUEBA_KEY
+    from pki import responder_ocsp
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000022'), config_validacion=cfg)
+    revocado = config_con(ca_dir=tmp_path, ocsp_post=lambda u, b: responder_ocsp(
+        CA_PRUEBA_KEY, CA_PRUEBA, HOJA_PRUEBA, 'REVOKED', revocado_en=T0 - timedelta(days=1)))
+    b = reg(db_pg, _reemplazo('E310000000022'), config_validacion=revocado, ahora=T0 + timedelta(hours=1))
+    assert b['xml_hash_sha256'] == a['xml_hash_sha256'] and b['monto_total'] == a['monto_total']
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
+    assert 'revocacion=FALLO' in db_pg.get_historial(a['id'])[-1]['detalle']
+
+
+def test_reemplazo_con_revocacion_no_verificable_se_acepta(db_pg, tmp_path):  # I3
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000023'), config_validacion=cfg)
+    b = reg(db_pg, _reemplazo('E310000000023'), config_validacion=cfg, ahora=T0 + timedelta(hours=1))
+    assert b['revocacion'] == NO_VERIFICABLE and b['monto_total'] == Decimal('9250')
+    assert DOCUMENTO_REEMPLAZADO in tipos(db_pg, a['id'])
+
+
+def test_reemplazo_con_seguimiento_inactivo_y_dgii_caida_reactiva_cierre(db_pg, tmp_path):  # M9
+    cfg = _confiando_en(CA_PRUEBA, tmp_path)
+    a = reg(db_pg, ecf_de_prueba('E310000000024'), config_validacion=cfg)
+    db_pg.update_comprobante(a['id'], {'seguimiento_activo': False})
+    ahora = T0 + timedelta(hours=100)
+    b = reg(db_pg, _reemplazo('E310000000024'), config_validacion=cfg, ahora=ahora, consultar=fijo(ERROR_R))
+    assert b['estado'] == PENDIENTE and b['seguimiento_activo'] is True
+    assert b['seguimiento_hasta'] == ahora and b['proxima_consulta'] == ahora
+    assert tipos(db_pg, a['id'])[-1] == ERROR_CONSULTA
+    assert [h['detalle'] for h in db_pg.get_historial(a['id'])].count('seguimiento cerrado sin consulta válida') == 0
