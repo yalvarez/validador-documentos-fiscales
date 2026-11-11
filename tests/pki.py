@@ -98,3 +98,11 @@ def firmar_ecf(xml_sin_firma: bytes, key, cert, fecha_firma: datetime) -> bytes:
     firmador.namespaces = {None: _NS_DSIG}
     firmado = firmador.sign(raiz, key=key, cert=[cert.public_bytes(Encoding.PEM).decode()])
     return etree.tostring(firmado)
+
+
+def crear_ca_con_subject(subject: x509.Name):
+    """CA autofirmada con el subject indicado (para probar suplantación por nombre)."""
+    key = _clave()
+    cert = _construir(subject, subject, key.public_key(), key, _INICIO, _FIN, True,
+                      key.public_key())
+    return key, cert
