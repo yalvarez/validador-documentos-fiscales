@@ -200,7 +200,9 @@ def _validar(xml_bytes, qr_params, config, ahora) -> ResultadoValidacionXML:
     ocsp_post = _con_tope(config.ocsp_post, contador)
 
     estructura = _seguro(verificar_estructura, xml_bytes, d.tipo_ecf, config.xsd_dir)
-    integridad = _seguro(verificar_integridad, xml_bytes)
+    # Mismo DER del firmante para integridad, vigencia, entidad y revocación.
+    integridad = _seguro(verificar_integridad, xml_bytes,
+                         d.certificados_der[0] if d.certificados_der else None)
     cruce = _seguro(verificar_cruce, d, qr_params)
     comprador = _seguro(verificar_comprador, d, config.rnc_terpel)
 

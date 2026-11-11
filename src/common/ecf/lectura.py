@@ -65,6 +65,39 @@ def _texto(raiz, nombre: str) -> str | None:
     return texto_completo(nodos[0]) or None
 
 
+def decodificar_base64_estricto(texto: str | None) -> bytes:
+    """Base64 estricto (validate=True) tras quitar espacios en blanco; vacío o inválido lanza ValueError."""
+    limpio = ''.join((texto or '').split())
+    if not limpio:
+        raise ValueError('Base64 vacío')
+    try:
+        return base64.b64decode(limpio, validate=True)
+    except binascii.Error as e:
+        raise ValueError(f'Base64 inválido: {e}') from e
+
+
+def certificados_keyinfo(raiz) -> list[bytes]:
+    """DER de los X509Certificate del KeyInfo de la Signature raíz; el primero es el del firmante.
+
+    Única fuente de verdad del certificado firmante (integridad, vigencia, entidad y revocación).
+    Si el primero falta, está vacío o no es base64 válido, devuelve [] (nunca se salta al siguiente).
+    Los siguientes inválidos (solo ayudan a armar la cadena) se omiten.
+    """
+    nodos = raiz.xpath(_RUTA_CERTS, namespaces=_NS)
+    if not nodos:
+        return []
+    try:
+        certs = [decodificar_base64_estricto(texto_completo(nodos[0]))]
+    except ValueError:
+        return []
+    for nodo in nodos[1:]:
+        try:
+            certs.append(decodificar_base64_estricto(texto_completo(nodo)))
+        except ValueError:
+            continue
+    return certs
+
+
 def leer_ecf(xml_bytes: bytes) -> DatosECF:
     raiz = parsear_ecf(xml_bytes)
 
@@ -94,12 +127,7 @@ def leer_ecf(xml_bytes: bytes) -> DatosECF:
     sig = texto_completo(nodos_sig[0]) if nodos_sig else None
     sig = ''.join(sig.split()) if sig else None
 
-    certs = []
-    for nodo in raiz.xpath(_RUTA_CERTS, namespaces=_NS):
-        try:
-            certs.append(base64.b64decode(''.join(texto_completo(nodo).split()), validate=True))
-        except (binascii.Error, ValueError):
-            continue
+    certs = certificados_keyinfo(raiz)
 
     return DatosECF(
         rnc_emisor=rnc.strip().upper(),

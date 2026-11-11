@@ -1,17 +1,18 @@
 import base64
 
-from lxml import etree
 from signxml import XMLVerifier
 
-from common.ecf.lectura import ErrorLecturaECF, normalizar_xml_bytes, parsear_ecf, texto_completo
+from common.ecf.lectura import ErrorLecturaECF, certificados_keyinfo, normalizar_xml_bytes, parsear_ecf
 from common.ecf.modelos import FALLO, OK, Verificacion
 
 NS_DSIG = 'http://www.w3.org/2000/09/xmldsig#'
 
 
-def verificar_integridad(xml_bytes: bytes) -> Verificacion:
-    """Verifica la firma XMLDSig del e-CF contra el certificado incrustado.
+def verificar_integridad(xml_bytes: bytes, certificado_der: bytes | None = None) -> Verificacion:
+    """Verifica la firma XMLDSig del e-CF contra el certificado firmante incrustado.
 
+    El certificado firmante es el primero del KeyInfo (`lectura.certificados_keyinfo`), el mismo
+    que usan vigencia, entidad y revocación. Si se pasa `certificado_der`, debe ser ese mismo.
     No evalúa la confianza del certificado (eso es `entidad_certificadora`).
     """
     try:
@@ -26,14 +27,17 @@ def verificar_integridad(xml_bytes: bytes) -> Verificacion:
         firma = raiz.xpath('ds:Signature', namespaces=ns)
         if len(firma) != 1:
             return Verificacion(FALLO, 'La firma no es hija directa del elemento raíz')
-        uris = [r.get('URI') for r in firma[0].xpath('ds:SignedInfo/ds:Reference', namespaces=ns)]
+        referencias = firma[0].xpath('ds:SignedInfo/ds:Reference', namespaces=ns)
+        uris = [r.get('URI') for r in referencias]
         if uris != ['']:
             return Verificacion(
                 FALLO, f'La firma no cubre el documento completo (Reference URI={uris})')
-        nodos = firma[0].xpath('ds:KeyInfo/ds:X509Data/ds:X509Certificate', namespaces=ns)
-        if not nodos or not texto_completo(nodos[0]):
-            return Verificacion(FALLO, 'Sin certificado incrustado')
-        der = base64.b64decode(''.join(texto_completo(nodos[0]).split()))
+        certs = certificados_keyinfo(raiz)
+        if not certs:
+            return Verificacion(FALLO, 'Sin certificado incrustado válido')
+        der = certs[0]
+        if certificado_der is not None and certificado_der != der:
+            return Verificacion(FALLO, 'El certificado indicado no es el del firmante')
         pem = (b'-----BEGIN CERTIFICATE-----\n'
                + base64.encodebytes(der) + b'-----END CERTIFICATE-----\n')
         verificador = XMLVerifier()
