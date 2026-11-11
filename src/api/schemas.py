@@ -1,3 +1,4 @@
+from datetime import datetime
 
 from pydantic import BaseModel
 from typing import Optional
@@ -62,3 +63,21 @@ class ConsultaFacturaParamsIn(BaseModel):
     MontoTotal: Optional[str] = None
     FechaFirma: Optional[str] = None
     CodigoSeguridad: Optional[str] = None
+
+
+class VerificacionOut(BaseModel):
+    resultado: str
+    detalle: str = ''
+
+
+class ComprobanteEstadoOut(BaseModel):
+    registrado: bool = True
+    rnc_emisor: str
+    encf: str
+    razon_social_emisor: Optional[str] = None
+    estado: str
+    estado_dgii_texto: Optional[str] = None
+    ultima_consulta_dgii: Optional[datetime] = None
+    seguimiento_activo: bool
+    seguimiento_hasta: Optional[datetime] = None
+    validacion: dict[str, VerificacionOut]

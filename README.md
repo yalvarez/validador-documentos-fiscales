@@ -47,6 +47,117 @@ curl -X POST "http://localhost:7000/validar-pdf" \
 }
 ```
 
+## Consulta del estado de un e-CF
+
+### GET `/comprobantes/{rnc_emisor}/{encf}`
+
+Devuelve el último estado conocido de un e-CF registrado en el sistema. El `rnc_emisor` y el `encf`
+se normalizan (se quitan espacios y se pasa a mayúsculas), de modo que `e310000002882` encuentra `E310000002882`.
+
+Requiere el header `x-api-key`. Solo funciona con PostgreSQL (`DB_ENGINE=postgres`); con otro motor responde `503`
+con `{"detail": "Requiere DB_ENGINE=postgres"}`.
+
+```bash
+curl "http://localhost:7000/comprobantes/101616202/E310000002882" -H "x-api-key: TU_API_KEY"
+```
+
+Respuesta `200`:
+
+```json
+{
+  "registrado": true,
+  "rnc_emisor": "101616202",
+  "encf": "E310000002882",
+  "razon_social_emisor": "EMPRESAS ASAVIM S R L",
+  "estado": "ACEPTADO",
+  "estado_dgii_texto": "Aceptado",
+  "ultima_consulta_dgii": "2026-11-10T14:05:00-04:00",
+  "seguimiento_activo": true,
+  "seguimiento_hasta": "2026-11-13T10:00:00-04:00",
+  "validacion": {
+    "estructura": {"resultado": "OK", "detalle": ""},
+    "integridad": {"resultado": "OK", "detalle": ""},
+    "vigencia": {"resultado": "OK", "detalle": "Vigente 2026-01-12 a 2027-01-12"},
+    "entidad_certificadora": {"resultado": "OK", "detalle": "VIAFIRMA DOMINICANA"},
+    "revocacion": {"resultado": "OK", "detalle": "OCSP: good"},
+    "cruce": {"resultado": "NO_VERIFICABLE", "detalle": "Sin PDF"},
+    "comprador": {"resultado": "OK", "detalle": ""}
+  }
+}
+```
+
+Las fechas van en ISO 8601 con la zona horaria de RD (`-04:00`). `ultima_consulta_dgii` es `null` si aún no se consultó.
+
+Respuesta `404` (el comprobante no se ha registrado):
+
+```json
+{"registrado": false}
+```
+
+#### Valores de `estado`
+
+| Estado | Significado |
+|---|---|
+| `PENDIENTE` | Registrado; la DGII todavía no ha dado un resultado. |
+| `ACEPTADO` | La DGII lo aceptó. |
+| `ACEPTADO_CONDICIONAL` | La DGII lo aceptó con condiciones. |
+| `RECHAZADO` | La DGII lo rechazó. |
+| `NO_ENCONTRADO` | La DGII no encontró el e-CF. |
+| `DESCONOCIDO` | No se pudo interpretar la respuesta de la DGII. |
+
+Mientras `seguimiento_activo` sea `true`, el sistema sigue consultando a la DGII con intervalos crecientes hasta `seguimiento_hasta`.
+
+#### Resultados de `validacion`
+
+Cada verificación (`estructura`, `integridad`, `vigencia`, `entidad_certificadora`, `revocacion`, `cruce`, `comprador`)
+trae un `resultado` y un `detalle`:
+
+| Resultado | Significado |
+|---|---|
+| `OK` | La verificación se hizo y pasó. |
+| `FALLO` | La verificación se hizo y no pasó; el `detalle` dice por qué. |
+| `NO_VERIFICABLE` | No se pudo comprobar (falta la XSD, no hay PDF, el servidor OCSP/CRL no respondió, no está configurado `RNC_TERPEL`, etc.). No es un fallo. |
+
+## Configuración del núcleo de validación y seguimiento
+
+### Base de datos
+
+El motor y la conexión se leen de variables de entorno (por defecto `sqlite` y `./db.sqlite3`):
+
+- `DB_ENGINE`: `sqlite` (por defecto), `postgres`, etc. El endpoint nuevo y el seguimiento exigen `postgres`.
+- `DB_CONNECTION_STRING`: por ejemplo `postgresql://validador:CLAVE@postgres:5432/validador`.
+- `POSTGRES_PASSWORD`: clave del servicio `postgres` de `docker-compose.yml`; se define en el archivo `.env` (ver `.env.example`).
+
+Con PostgreSQL, la bitácora `facturas` de los endpoints existentes (`/validar-factura-*`) también vive en Postgres.
+
+### Parámetros (tabla `parametros`)
+
+Si faltan o no son válidos se usa el valor por defecto y se registra un aviso en el log.
+
+| Parámetro | Por defecto | Descripción |
+|---|---|---|
+| `SEGUIMIENTO_INTERVALO_INICIAL_MIN` | 60 | Minutos hasta la segunda consulta a la DGII. |
+| `SEGUIMIENTO_FACTOR` | 2 | Factor por el que crece el intervalo. |
+| `SEGUIMIENTO_INTERVALO_MAX_MIN` | 1440 | Intervalo máximo entre consultas, en minutos. |
+| `SEGUIMIENTO_DURACION_MAX_HORAS` | 72 | Duración máxima del seguimiento. |
+| `SEGUIMIENTO_CICLO_SEG` | 300 | Cada cuántos segundos el worker busca comprobantes por consultar. |
+| `RNC_TERPEL` | vacío | RNC esperado del comprador; vacío = la verificación `comprador` da `NO_VERIFICABLE`. |
+| `CA_CONFIANZA_DIR` | `src/common/ecf/confianza/` | Carpeta con los certificados de las entidades certificadoras de confianza. |
+
+### Agregar una entidad certificadora
+
+1. Obtener el certificado (formato PEM o DER) de la entidad certificadora dominicana que emite los certificados de firma (el intermedio dominicano, no una raíz extranjera compartida) desde una fuente oficial, por ejemplo la lista de INDOTEL.
+2. Guardarlo en `src/common/ecf/confianza/` (o en la carpeta de `CA_CONFIANZA_DIR`) como `<entidad>.pem`.
+3. Anotar en `src/common/ecf/confianza/FUENTE.md` el sujeto, el SHA-256, la fuente y la fecha de descarga.
+
+Cada certificado de la carpeta es un ancla que se compara por huella SHA-256 exacta, nunca por nombre.
+
+### Instalar las XSD oficiales de la DGII
+
+Las XSD no vienen incluidas; sin ellas la verificación `estructura` da `NO_VERIFICABLE`. Descargarlas con un navegador
+desde el sitio de la DGII y guardarlas en `src/common/ecf/xsd/` como `e-CF-<tipo>.xsd` (tipos 31, 32, 33, 34, 41, 43, 44, 45, 46 y 47).
+Las instrucciones completas, incluido el manejo de esquemas importados, están en `src/common/ecf/xsd/FUENTE.md`.
+
 ## Ejemplos de consumo
 
 ### Python (requests)

@@ -3,6 +3,8 @@ import requests
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Header
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from api.schemas import ComprobanteEstadoOut, VerificacionOut
 from api.schemas import ParametroOut, ParametroIn, FacturaOut, MensajeOut
 from api.parametros_manager import ParametrosManager
 from db.db_factory import get_db_wrapper
@@ -12,6 +14,7 @@ from common.validator.web_validator import WebValidator
 import tempfile
 from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn, ValidarFacturaBase64In
 import base64
+from common.ecf.modelos import ZONA_RD
 
 API_KEYS = [k.strip() for k in os.getenv('API_KEYS', 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
 
@@ -225,6 +228,38 @@ def validar_factura_params(
         rnc_emisor=body.RncEmisor,
         razon_social_emisor=razon_social_emisor,
         estado=estado
+    )
+
+
+def _a_zona_rd(fecha):
+    return fecha.astimezone(ZONA_RD) if fecha is not None else None
+
+
+@app.get("/comprobantes/{rnc_emisor}/{encf}", response_model=ComprobanteEstadoOut,
+         responses={404: {"description": "Comprobante no registrado: {\"registrado\": false}"},
+                    503: {"description": "Requiere DB_ENGINE=postgres"}},
+         description="Devuelve el último estado conocido de un e-CF registrado, con el resultado de cada verificación del XML. Fechas en zona horaria de RD (-04:00).")
+def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(verify_api_key)):
+    if leer_config_db()[0] != 'postgres':
+        raise HTTPException(status_code=503, detail="Requiere DB_ENGINE=postgres")
+    db = get_db()
+    try:
+        c = db.get_comprobante(rnc_emisor, encf)
+    finally:
+        if hasattr(db, 'close'):
+            db.close()
+    if c is None:
+        return JSONResponse(status_code=404, content={"registrado": False})
+    return ComprobanteEstadoOut(
+        rnc_emisor=c['rnc_emisor'],
+        encf=c['encf'],
+        razon_social_emisor=c['razon_social_emisor'],
+        estado=c['estado'],
+        estado_dgii_texto=c['estado_dgii_texto'],
+        ultima_consulta_dgii=_a_zona_rd(c['ultima_consulta_dgii']),
+        seguimiento_activo=c['seguimiento_activo'],
+        seguimiento_hasta=_a_zona_rd(c['seguimiento_hasta']),
+        validacion={k: VerificacionOut(**v) for k, v in (c['validacion_detalle'] or {}).items()},
     )
 
 
