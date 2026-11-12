@@ -73,3 +73,17 @@ def test_motor_no_postgres(cliente, monkeypatch):
     monkeypatch.setenv('DB_ENGINE', 'sqlite')
     r = cliente.post('/comprobantes', headers=KEY, files={'xml': ('a.xml', MUESTRA_XML, 'application/xml')})
     assert r.status_code == 503
+
+
+def test_reenvio_identico_200(cliente):
+    archivos = {'xml': ('a.xml', MUESTRA_XML, 'application/xml')}
+    assert cliente.post('/comprobantes', headers=KEY, files=archivos).status_code == 200
+    assert cliente.post('/comprobantes', headers=KEY, files=archivos).status_code == 200
+
+
+def test_xml_distinto_para_comprobante_registrado_409(cliente, db_pg):
+    cliente.post('/comprobantes', headers=KEY, files={'xml': ('a.xml', MUESTRA_XML, 'application/xml')})
+    alterado = MUESTRA_XML.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    r = cliente.post('/comprobantes', headers=KEY, files={'xml': ('b.xml', alterado, 'application/xml')})
+    assert r.status_code == 409 and 'no se reemplaza' in r.json()['detail']
+    assert bytes(db_pg.get_comprobante('101616202', 'E310000002882')['xml_contenido']) == MUESTRA_XML

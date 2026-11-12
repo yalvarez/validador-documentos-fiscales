@@ -1,3 +1,4 @@
+import hashlib
 import os
 import requests
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Header
@@ -283,7 +284,8 @@ async def _leer_archivo(archivo: UploadFile | None, nombre: str) -> bytes | None
 
 
 @app.post("/comprobantes", response_model=ComprobanteEstadoOut,
-          responses={413: {"description": "Archivo demasiado grande"},
+          responses={409: {"description": "El comprobante ya está registrado con otro XML; no se reemplaza"},
+                     413: {"description": "Archivo demasiado grande"},
                      422: {"description": "El XML no es un e-CF legible (mal formado, o sin RNCEmisor o eNCF)"},
                      503: {"description": "Requiere DB_ENGINE=postgres"}},
           description="Registra un e-CF: valida el XML (estructura contra la XSD de la DGII, integridad de la firma, "
@@ -291,7 +293,8 @@ async def _leer_archivo(archivo: UploadFile | None, nombre: str) -> bytes | None
                       "siempre desde el XML firmado. El PDF es opcional: si viene, los datos de su QR se cruzan con "
                       "el XML (verificación `cruce`); sin PDF, `cruce` da NO_VERIFICABLE. El comprobante queda en "
                       "seguimiento periódico; su último estado se consulta con GET /comprobantes/{rnc_emisor}/{encf}. "
-                      "Reenviar el mismo e-CF es idempotente.")
+                      "Reenviar el mismo XML es idempotente (sirve para agregar el PDF después); un XML distinto "
+                      "para un e-CF ya registrado se rechaza con 409 y nunca reemplaza al guardado.")
 async def registrar_comprobante_api(xml: UploadFile = File(..., description="e-CF firmado (XML)"),
                                     pdf: UploadFile | None = File(None, description="Representación impresa (PDF con QR), opcional"),
                                     x_api_key: str = Depends(verify_api_key)):
@@ -311,6 +314,8 @@ async def registrar_comprobante_api(xml: UploadFile = File(..., description="e-C
         c = await run_in_threadpool(_registrar)
     except ErrorLecturaECF as e:
         raise HTTPException(status_code=422, detail=str(e))
+    if c['xml_hash_sha256'] != hashlib.sha256(xml_bytes).hexdigest():
+        raise HTTPException(status_code=409, detail="El comprobante ya está registrado con otro XML; no se reemplaza")
     return _comprobante_out(c)
 
 

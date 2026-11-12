@@ -60,8 +60,10 @@ curl -X POST "http://localhost:7000/validar-pdf" \
   `cruce`), lo que detecta un PDF que no corresponde a su XML. Sin PDF, `cruce` da `NO_VERIFICABLE`.
 
 Valida el XML, hace la primera consulta a la DGII y deja el comprobante en seguimiento. Responde lo mismo que el
-`GET` de abajo. Reenviar el mismo e-CF no lo duplica. Errores: `422` si el XML no es un e-CF legible, `413` si un
-archivo supera 10 MB.
+`GET` de abajo. Reenviar exactamente el mismo XML no lo duplica (sirve, por ejemplo, para agregar el PDF después).
+Un comprobante registrado **nunca se reemplaza**: un XML distinto para el mismo RNC emisor y e-NCF se rechaza con
+`409`, se descarta y queda anotado en el historial como `DOCUMENTO_RECHAZADO`. Otros errores: `422` si el XML no es
+un e-CF legible, `413` si un archivo supera 10 MB.
 
 ```bash
 curl -X POST "https://validador-fe.ysalabs.work/comprobantes"   -H "x-api-key: TU_API_KEY"   -F "xml=@101616202E310000002882.xml"   -F "pdf=@101616202E310000002882.pdf"

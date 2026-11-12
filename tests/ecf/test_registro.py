@@ -82,34 +82,44 @@ def test_reemplazo_firmado_por_ca_no_confiable_se_rechaza(db_pg, tmp_path):
     assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
 
 
-def test_reemplazo_aceptado(db_pg, tmp_path):
+def _reemplazo(encf: str) -> bytes:
+    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', f'<eNCF>{encf}</eNCF>'.encode())
+    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    return firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0)
+
+
+def test_xml_distinto_con_firma_valida_no_reemplaza(db_pg, tmp_path):
+    """Un comprobante registrado no se reemplaza nunca, aunque el XML nuevo tenga firma y certificado válidos."""
     cfg = _confiando_en(CA_PRUEBA, tmp_path)
     a = reg(db_pg, ecf_de_prueba('E310000000008'), config_validacion=cfg, origen='email', referencia_origen='m1')
     assert a['estado'] == ACEPTADO
-    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', b'<eNCF>E310000000008</eNCF>')
-    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
-    ahora = T0 + timedelta(hours=1)
-    b = reg(db_pg, firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0), config_validacion=cfg, ahora=ahora,
-            origen='api', referencia_origen='otro')
-    assert b['id'] == a['id'] and b['estado'] == ACEPTADO and b['proxima_consulta'] == ahora
-    assert b['monto_total'] == Decimal('9250') and 'MontoTotal=9250.00' in b['url_consulta']
-    assert b['seguimiento_hasta'] == a['seguimiento_hasta'] and b['intentos'] == a['intentos'] + 1
-    assert b['intervalo_actual_min'] == a['intervalo_actual_min']
+    consultas = []
+    b = reg(db_pg, _reemplazo('E310000000008'), config_validacion=cfg, ahora=T0 + timedelta(hours=1),
+            origen='api', consultar=lambda u: consultas.append(u) or RespuestaDGII('DATOS', 'Rechazado'))
+    assert consultas == []
+    assert b['id'] == a['id'] and b['estado'] == ACEPTADO and b['monto_total'] == a['monto_total']
+    assert b['xml_hash_sha256'] == a['xml_hash_sha256'] and b['url_consulta'] == a['url_consulta']
+    assert (b['proxima_consulta'], b['intentos'], b['seguimiento_hasta']) == (a['proxima_consulta'], a['intentos'], a['seguimiento_hasta'])
     assert (b['origen'], b['referencia_origen']) == ('email', 'm1')
-    assert b['razon_social_emisor'] == a['razon_social_emisor']
-    assert tipos(db_pg, a['id'])[-4:] == [CAMBIO_ESTADO, DOCUMENTO_REEMPLAZADO, CONSULTA, CAMBIO_ESTADO]
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO and DOCUMENTO_REEMPLAZADO not in tipos(db_pg, a['id'])
 
 
-def test_reemplazo_aceptado_con_seguimiento_inactivo(db_pg, tmp_path):
+def test_xml_distinto_con_seguimiento_inactivo_no_lo_reactiva(db_pg, tmp_path):
     cfg = _confiando_en(CA_PRUEBA, tmp_path)
     a = reg(db_pg, ecf_de_prueba('E310000000009'), config_validacion=cfg)
     db_pg.update_comprobante(a['id'], {'seguimiento_activo': False})
-    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', b'<eNCF>E310000000009</eNCF>')
-    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
-    b = reg(db_pg, firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0), config_validacion=cfg,
-            ahora=T0 + timedelta(hours=1), consultar=fijo(RespuestaDGII('DATOS', 'Rechazado')))
-    assert b['estado'] == RECHAZADO and b['seguimiento_activo'] is False
-    assert b['proxima_consulta'] == a['proxima_consulta'] and b['seguimiento_hasta'] == a['seguimiento_hasta']
+    b = reg(db_pg, _reemplazo('E310000000009'), config_validacion=cfg, ahora=T0 + timedelta(hours=100),
+            consultar=fijo(ERROR_R))
+    assert b['seguimiento_activo'] is False and b['xml_hash_sha256'] == a['xml_hash_sha256']
+    assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
+
+
+def test_xml_distinto_con_pdf_no_cambia_el_qr_guardado(db_pg, monkeypatch):
+    a = reg(db_pg)
+    monkeypatch.setattr(registro, 'extraer_qr_params', lambda b: {**QR_MUESTRA, 'MontoTotal': '9999'})
+    alterado = MUESTRA_XML.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
+    b = reg(db_pg, alterado, pdf_bytes=b'%PDF', ahora=T0 + timedelta(hours=1))
+    assert b['qr_params'] == a['qr_params'] and b['validacion_detalle'] == a['validacion_detalle']
 
 
 def test_consultar_lanza_conserva_registro(db_pg):
@@ -146,27 +156,6 @@ def test_reenvio_sin_pdf_conserva_cruce_fallo(db_pg, monkeypatch):  # I2
     assert b['qr_params'] == a['qr_params']
 
 
-def _reemplazo(encf: str) -> bytes:
-    xml = XML_SIN_FIRMA.replace(b'<eNCF>E310000002882</eNCF>', f'<eNCF>{encf}</eNCF>'.encode())
-    xml = xml.replace(b'<MontoTotal>1250</MontoTotal>', b'<MontoTotal>9250</MontoTotal>')
-    return firmar_ecf(xml, HOJA_PRUEBA_KEY, HOJA_PRUEBA, T0)
-
-
-def test_reemplazo_sin_pdf_usa_qr_guardado(db_pg, tmp_path, monkeypatch):  # I2, rama de reemplazo
-    cfg = _confiando_en(CA_PRUEBA, tmp_path)
-    original = ecf_de_prueba('E310000000020')
-    d = leer_ecf(original)
-    qr = {'RncEmisor': d.rnc_emisor, 'RncComprador': d.rnc_comprador, 'ENCF': d.encf,
-          'FechaEmision': d.fecha_emision_texto, 'MontoTotal': str(d.monto_total),
-          'FechaFirma': d.fecha_firma_texto, 'CodigoSeguridad': d.codigo_seguridad}
-    monkeypatch.setattr(registro, 'extraer_qr_params', lambda b: qr)
-    a = reg(db_pg, original, config_validacion=cfg, pdf_bytes=b'%PDF')
-    assert a['validacion_detalle']['cruce']['resultado'] == OK
-    b = reg(db_pg, _reemplazo('E310000000020'), config_validacion=cfg, ahora=T0 + timedelta(hours=1))
-    assert b['monto_total'] == Decimal('9250')
-    assert b['validacion_detalle']['cruce']['resultado'] == FALLO and b['qr_params'] == a['qr_params']
-
-
 def test_reemplazo_con_comprador_fallo_se_rechaza(db_pg, tmp_path):  # I3
     cfg = _confiando_en(CA_PRUEBA, tmp_path)
     a = reg(db_pg, ecf_de_prueba('E310000000021'), config_validacion=cfg)
@@ -188,23 +177,3 @@ def test_reemplazo_con_certificado_revocado_se_rechaza(db_pg, tmp_path):  # I3
     assert b['xml_hash_sha256'] == a['xml_hash_sha256'] and b['monto_total'] == a['monto_total']
     assert tipos(db_pg, a['id'])[-1] == DOCUMENTO_RECHAZADO
     assert 'revocacion=FALLO' in db_pg.get_historial(a['id'])[-1]['detalle']
-
-
-def test_reemplazo_con_revocacion_no_verificable_se_acepta(db_pg, tmp_path):  # I3
-    cfg = _confiando_en(CA_PRUEBA, tmp_path)
-    a = reg(db_pg, ecf_de_prueba('E310000000023'), config_validacion=cfg)
-    b = reg(db_pg, _reemplazo('E310000000023'), config_validacion=cfg, ahora=T0 + timedelta(hours=1))
-    assert b['revocacion'] == NO_VERIFICABLE and b['monto_total'] == Decimal('9250')
-    assert DOCUMENTO_REEMPLAZADO in tipos(db_pg, a['id'])
-
-
-def test_reemplazo_con_seguimiento_inactivo_y_dgii_caida_reactiva_cierre(db_pg, tmp_path):  # M9
-    cfg = _confiando_en(CA_PRUEBA, tmp_path)
-    a = reg(db_pg, ecf_de_prueba('E310000000024'), config_validacion=cfg)
-    db_pg.update_comprobante(a['id'], {'seguimiento_activo': False})
-    ahora = T0 + timedelta(hours=100)
-    b = reg(db_pg, _reemplazo('E310000000024'), config_validacion=cfg, ahora=ahora, consultar=fijo(ERROR_R))
-    assert b['estado'] == PENDIENTE and b['seguimiento_activo'] is True
-    assert b['seguimiento_hasta'] == ahora and b['proxima_consulta'] == ahora
-    assert tipos(db_pg, a['id'])[-1] == ERROR_CONSULTA
-    assert [h['detalle'] for h in db_pg.get_historial(a['id'])].count('seguimiento cerrado sin consulta válida') == 0

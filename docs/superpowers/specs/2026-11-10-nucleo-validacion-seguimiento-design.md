@@ -168,7 +168,10 @@ endpoints existentes y no se modifica.
 
 Si llega de nuevo un comprobante ya registrado:
 - se vuelve a validar el XML;
-- si el hash del XML cambió, se registra `DOCUMENTO_REEMPLAZADO` y se guarda el XML nuevo;
+- si el hash del XML cambió, ~~se registra `DOCUMENTO_REEMPLAZADO` y se guarda el XML nuevo~~
+  **(cambio 2026-11-12, decisión del usuario)** el XML nuevo se descarta, se registra `DOCUMENTO_RECHAZADO`
+  y lo guardado no cambia: un comprobante registrado no se reemplaza nunca, porque no se verifica que el
+  titular del certificado sea el emisor y un reemplazo permitiría sustituir la factura de otro;
 - el seguimiento **no** se reinicia.
 
 ### 6.4 Registro (punto de entrada común)
