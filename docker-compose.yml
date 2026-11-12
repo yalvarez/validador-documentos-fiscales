@@ -48,13 +48,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Consola web en http://localhost:5173/client (reenvia /client/api a la API con CONSOLA_API_KEY).
+  # Consola web en http://localhost:5173/client: pide usuario/contrasena (CONSOLA_HTPASSWD_B64) y
+  # reenvia /client/api a la API con CONSOLA_API_KEY.
   frontend:
     build:
       context: ./src/client
     container_name: validador-frontend
     environment:
       - CONSOLA_API_KEY=${CONSOLA_API_KEY:-}
+      - CONSOLA_HTPASSWD_B64=${CONSOLA_HTPASSWD_B64:-}
     depends_on:
       - backend
     ports:

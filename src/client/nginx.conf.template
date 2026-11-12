@@ -1,20 +1,30 @@
 # Plantilla: la imagen oficial de nginx sustituye ${CONSOLA_API_KEY} y ${API_UPSTREAM} al arrancar
 # (solo variables definidas en el entorno; $uri y demas variables de nginx quedan intactas).
+#
+# Seguridad: este nginx agrega la API key, asi que el mismo exige usuario y contrasena (no se delega
+# en Traefik: el contenedor esta en una red compartida con otros proyectos). Sin credenciales
+# configuradas, el archivo queda vacio y todo acceso se rechaza.
 server {
   listen 80;
   server_name _;
   absolute_redirect off;
   root /usr/share/nginx/html;
 
-  location = / { return 302 /client/; }
-  location = /client { return 301 /client/; }
+  auth_basic "Validador e-CF";
+  auth_basic_user_file /etc/nginx/consola.htpasswd;
 
-  # La consola llama a /client/api/...; aqui se agrega la API key, que nunca llega al navegador.
   # DNS de Docker con variable: el nombre se resuelve en cada peticion, asi un backend recreado
   # (IP nueva) no deja a nginx apuntando a la vieja.
   resolver 127.0.0.11 valid=10s ipv6=off;
 
-  location /client/api/ {
+  location = / { return 302 /client/; }
+  location = /client { return 301 /client/; }
+
+  # Solo los endpoints que usa la consola. El header X-Consola lo pone la consola; un formulario o
+  # enlace de otro sitio no puede enviarlo (y fetch con header propio exige un preflight CORS que
+  # aqui no se concede), asi el navegador de un usuario con sesion no sirve para CSRF.
+  location ~ ^/client/api/(comprobantes|parametros)(/|$) {
+    if ($http_x_consola != "1") { return 403; }
     client_max_body_size 21m;
     set $api_upstream ${API_UPSTREAM};
     rewrite ^/client/api/(.*)$ /$1 break;
@@ -22,8 +32,12 @@ server {
     proxy_set_header Host $host;
     proxy_set_header x-api-key "${CONSOLA_API_KEY}";
     proxy_set_header Authorization "";
+    proxy_set_header Origin "";
+    proxy_hide_header Access-Control-Allow-Origin;
     proxy_read_timeout 120s;
   }
+
+  location /client/api/ { return 404; }
 
   location /client/assets/ {
     add_header Cache-Control "public, max-age=31536000, immutable";

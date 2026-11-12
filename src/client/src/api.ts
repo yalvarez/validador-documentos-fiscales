@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-export const api = axios.create({ baseURL: '/client/api' });
+// X-Consola: el nginx de la consola rechaza /client/api sin este header (defensa contra CSRF).
+export const api = axios.create({ baseURL: '/client/api', headers: { 'X-Consola': '1' } });
 
 export type Resultado = 'OK' | 'FALLO' | 'NO_VERIFICABLE' | string;
 

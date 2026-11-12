@@ -132,3 +132,17 @@ def test_busqueda_trata_comodines_como_texto(cliente, db_pg):
     reg(db_pg)
     assert cliente.get('/comprobantes', params={'q': '%'}, headers=KEY).json()['total'] == 0
     assert cliente.get('/comprobantes', params={'q': '_'}, headers=KEY).json()['total'] == 0
+
+
+@pytest.mark.parametrize('clave,valor', [
+    ('SEGUIMIENTO_CICLO_SEG', '99999999999'), ('SEGUIMIENTO_DURACION_MAX_HORAS', '8761'),
+    ('SEGUIMIENTO_FACTOR', '11'), ('SEGUIMIENTO_CICLO_SEG', '٣٠٠'), ('RNC_TERPEL', '١٠١٦١٦٢٠٢')])
+def test_parametro_fuera_de_rango_422(cliente, db_pg, clave, valor):
+    assert cliente.put(f'/parametros/{clave}', headers=KEY, json={'valor': valor}).status_code == 422
+    assert db_pg.get_param(clave) is None
+
+
+def test_cors_sin_credenciales(cliente):
+    r = cliente.options('/comprobantes', headers={'Origin': 'https://malo.example', 'Access-Control-Request-Method': 'GET',
+                                                  'Access-Control-Request-Headers': 'x-api-key'})
+    assert r.headers.get('access-control-allow-credentials') != 'true'

@@ -1,3 +1,4 @@
+import pytest
 from datetime import timedelta
 
 from ayudantes import DATOS_ACEPTADO, ERROR_R, NO_ENCONTRADO_R, T0
@@ -78,3 +79,25 @@ def test_factor_menor_que_uno_usa_defecto(caplog):  # T10
     assert 'SEGUIMIENTO_FACTOR' in caplog.text
     assert config_seguimiento_desde_parametros({'SEGUIMIENTO_FACTOR': '1'}).factor == 1.0
     assert config_seguimiento_desde_parametros({'SEGUIMIENTO_FACTOR': '1.5'}).factor == 1.5
+
+
+@pytest.mark.parametrize('clave,valor', [
+    ('SEGUIMIENTO_CICLO_SEG', '86401'), ('SEGUIMIENTO_CICLO_SEG', '99999999999'),
+    ('SEGUIMIENTO_DURACION_MAX_HORAS', '8761'), ('SEGUIMIENTO_INTERVALO_INICIAL_MIN', '10081'),
+    ('SEGUIMIENTO_INTERVALO_MAX_MIN', '10081'), ('SEGUIMIENTO_FACTOR', '10.5'), ('SEGUIMIENTO_FACTOR', '1e300')])
+def test_valor_fuera_de_rango_usa_defecto(clave, valor, caplog):
+    assert config_seguimiento_desde_parametros({clave: valor}) == ConfigSeguimiento()
+    assert clave in caplog.text
+
+
+def test_maximos_se_aceptan():
+    cfg = config_seguimiento_desde_parametros({
+        'SEGUIMIENTO_CICLO_SEG': '86400', 'SEGUIMIENTO_DURACION_MAX_HORAS': '8760',
+        'SEGUIMIENTO_INTERVALO_INICIAL_MIN': '10080', 'SEGUIMIENTO_INTERVALO_MAX_MIN': '10080',
+        'SEGUIMIENTO_FACTOR': '10'})
+    assert (cfg.ciclo_seg, cfg.duracion_max_horas, cfg.intervalo_inicial_min, cfg.intervalo_max_min, cfg.factor) == \
+        (86400, 8760, 10080, 10080, 10.0)
+
+
+def test_digitos_no_ascii_se_rechazan():
+    assert config_seguimiento_desde_parametros({'SEGUIMIENTO_CICLO_SEG': '٦٠٠'}).ciclo_seg == 300

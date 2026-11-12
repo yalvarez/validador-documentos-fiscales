@@ -10,7 +10,7 @@ from api.schemas import ComprobanteEstadoOut, VerificacionOut
 from api.schemas import (ComprobanteResumenOut, EventoHistorialOut, ListaComprobantesOut,
                          ParametroConsolaOut, ParametroValorIn)
 from fastapi import Query
-from common.ecf.seguimiento import ConfigSeguimiento
+from common.ecf.seguimiento import ConfigSeguimiento, validar_parametro_seguimiento
 from api.schemas import ParametroOut, ParametroIn, FacturaOut, MensajeOut
 from api.parametros_manager import ParametrosManager
 from db.db_factory import get_db_wrapper
@@ -30,10 +30,11 @@ API_KEYS = [k.strip() for k in (os.getenv('API_KEYS') or 'YomxbA2xGssmMF2xPmyrgs
 
 app = FastAPI(title="Validador de Facturas DGII", version="1.0")
     
-# Configurar CORS para permitir peticiones desde el frontend
+# CORS abierto para clientes con x-api-key, pero sin credenciales del navegador (cookies o basicAuth):
+# una página de otro origen no puede reutilizar la sesión de un usuario de la consola.
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -388,34 +389,21 @@ def historial_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(v
     return [EventoHistorialOut(**{k: e[k] for k in campos}, fecha=_a_zona_rd(e['fecha'])) for e in eventos]
 
 
-def _entero_positivo(v: str):
-    if not v.isdigit() or int(v) <= 0:
-        raise ValueError('debe ser un entero mayor que 0')
-
-
-def _factor(v: str):
-    try:
-        f = float(v)
-    except ValueError:
-        raise ValueError('debe ser un número mayor o igual a 1')
-    if not (1 <= f < float('inf')):
-        raise ValueError('debe ser un número mayor o igual a 1')
-
-
-def _rnc(v: str):
-    if not (v.isdigit() and len(v) in (9, 11)):
+def _rnc(_clave: str, v: str):
+    if not (v.isascii() and v.isdigit() and len(v) in (9, 11)):
         raise ValueError('debe tener 9 dígitos (RNC) u 11 (cédula)')
 
 
 _DEF = ConfigSeguimiento()
+_seguimiento = validar_parametro_seguimiento  # mismas reglas y topes que aplica el worker
 # clave -> (valor por defecto, descripción, validador). Solo estas se pueden editar por la API.
 PARAMETROS_EDITABLES = {
     'RNC_TERPEL': ('(vacío)', 'RNC esperado del comprador. Vacío: la verificación «comprador» da NO_VERIFICABLE.', _rnc),
-    'SEGUIMIENTO_INTERVALO_INICIAL_MIN': (str(_DEF.intervalo_inicial_min), 'Minutos hasta la segunda consulta a la DGII.', _entero_positivo),
-    'SEGUIMIENTO_FACTOR': (str(_DEF.factor), 'Factor por el que crece el intervalo entre consultas.', _factor),
-    'SEGUIMIENTO_INTERVALO_MAX_MIN': (str(_DEF.intervalo_max_min), 'Intervalo máximo entre consultas, en minutos.', _entero_positivo),
-    'SEGUIMIENTO_DURACION_MAX_HORAS': (str(_DEF.duracion_max_horas), 'Horas durante las que se sigue un comprobante.', _entero_positivo),
-    'SEGUIMIENTO_CICLO_SEG': (str(_DEF.ciclo_seg), 'Cada cuántos segundos el worker busca comprobantes por consultar.', _entero_positivo),
+    'SEGUIMIENTO_INTERVALO_INICIAL_MIN': (str(_DEF.intervalo_inicial_min), 'Minutos hasta la segunda consulta a la DGII (máx. 10080).', _seguimiento),
+    'SEGUIMIENTO_FACTOR': (str(_DEF.factor), 'Factor por el que crece el intervalo entre consultas (1 a 10).', _seguimiento),
+    'SEGUIMIENTO_INTERVALO_MAX_MIN': (str(_DEF.intervalo_max_min), 'Intervalo máximo entre consultas, en minutos (máx. 10080).', _seguimiento),
+    'SEGUIMIENTO_DURACION_MAX_HORAS': (str(_DEF.duracion_max_horas), 'Horas durante las que se sigue un comprobante (máx. 8760).', _seguimiento),
+    'SEGUIMIENTO_CICLO_SEG': (str(_DEF.ciclo_seg), 'Cada cuántos segundos el worker busca comprobantes por consultar (máx. 86400).', _seguimiento),
 }
 
 
@@ -448,7 +436,7 @@ def actualizar_parametro_consola(clave: str, body: ParametroValorIn, x_api_key: 
     valor = body.valor.strip()
     if valor:
         try:
-            PARAMETROS_EDITABLES[clave][2](valor)
+            PARAMETROS_EDITABLES[clave][2](clave, valor)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"{clave}: {e}")
     db = get_db()

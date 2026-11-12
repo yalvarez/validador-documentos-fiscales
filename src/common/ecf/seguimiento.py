@@ -28,21 +28,49 @@ _PARAMETROS = {
 }
 
 
+# Topes: un valor enorme dejaría el seguimiento prácticamente detenido.
+_MAXIMOS = {
+    'intervalo_inicial_min': 10080,   # 7 días
+    'factor': 10,
+    'intervalo_max_min': 10080,       # 7 días
+    'duracion_max_horas': 8760,       # 1 año
+    'ciclo_seg': 86400,               # 1 día
+}
+CLAVES_SEGUIMIENTO = {clave: campo for campo, (clave, _) in _PARAMETROS.items()}
+
+
+def validar_parametro_seguimiento(clave: str, crudo) -> int | float:
+    """Convierte y valida un parámetro SEGUIMIENTO_*; lanza ValueError con el motivo."""
+    campo = CLAVES_SEGUIMIENTO[clave]
+    tipo = _PARAMETROS[campo][1]
+    texto = str(crudo).strip()
+    if not texto.isascii():
+        raise ValueError('solo se admiten dígitos ASCII')
+    try:
+        valor = tipo(texto)
+    except (ValueError, TypeError):
+        raise ValueError('debe ser un entero' if tipo is int else 'debe ser un número')
+    # `not (x >= y)` también rechaza NaN; infinito cae en el tope.
+    if campo == 'factor' and not valor >= 1:
+        raise ValueError('el factor debe ser >= 1 (si no, el intervalo se reduciría)')
+    if campo != 'factor' and not valor > 0:
+        raise ValueError('debe ser mayor que 0')
+    if valor > _MAXIMOS[campo]:
+        raise ValueError(f'el máximo es {_MAXIMOS[campo]}')
+    return valor
+
+
 def config_seguimiento_desde_parametros(parametros) -> ConfigSeguimiento:
     """Lee la configuración; un valor ausente o inválido usa el por defecto (con aviso)."""
     cfg = ConfigSeguimiento()
     for f in fields(cfg):
-        clave, tipo = _PARAMETROS[f.name]
+        clave = _PARAMETROS[f.name][0]
         crudo = parametros.get(clave, None)
         if crudo is None or str(crudo).strip() == '':
             continue
         try:
-            valor = tipo(str(crudo).strip())
-            if not valor > 0 or valor != valor or valor == float('inf'):
-                raise ValueError('debe ser positivo y finito')
-            if f.name == 'factor' and valor < 1:
-                raise ValueError('el factor debe ser >= 1 (si no, el intervalo se reduciría)')
-        except (ValueError, TypeError) as e:
+            valor = validar_parametro_seguimiento(clave, crudo)
+        except ValueError as e:
             logging.warning('Parámetro %s inválido (%r): %s; se usa %r', clave, crudo, e, getattr(cfg, f.name))
             continue
         setattr(cfg, f.name, valor)
