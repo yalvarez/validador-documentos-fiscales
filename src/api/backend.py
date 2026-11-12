@@ -1,6 +1,7 @@
 import os
 import requests
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Header
+from starlette.concurrency import run_in_threadpool
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2AuthorizationCodeBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,6 +16,10 @@ import tempfile
 from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaParamsIn, ValidarFacturaBase64In
 import base64
 from common.ecf.modelos import VERIFICACIONES, ZONA_RD
+from common.ecf.lectura import ErrorLecturaECF
+from common.ecf.registro import registrar_comprobante
+
+MAX_BYTES_ARCHIVO = 10 * 1024 * 1024  # por archivo (XML o PDF)
 
 API_KEYS = [k.strip() for k in (os.getenv('API_KEYS') or 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
 
@@ -249,20 +254,7 @@ def _a_zona_rd(fecha):
     return fecha.astimezone(ZONA_RD) if fecha is not None else None
 
 
-@app.get("/comprobantes/{rnc_emisor}/{encf}", response_model=ComprobanteEstadoOut,
-         responses={404: {"description": "Comprobante no registrado: {\"registrado\": false}"},
-                    503: {"description": "Requiere DB_ENGINE=postgres"}},
-         description="Devuelve el último estado conocido de un e-CF registrado, con el resultado de cada verificación del XML. Fechas en zona horaria de RD (-04:00).")
-def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(verify_api_key)):
-    if leer_config_db()[0] != 'postgres':
-        raise HTTPException(status_code=503, detail="Requiere DB_ENGINE=postgres")
-    db = get_db()
-    try:
-        c = db.get_comprobante(rnc_emisor, encf)
-    finally:
-        _cerrar_db(db)
-    if c is None:
-        return JSONResponse(status_code=404, content={"registrado": False})
+def _comprobante_out(c) -> ComprobanteEstadoOut:
     return ComprobanteEstadoOut(
         rnc_emisor=c['rnc_emisor'],
         encf=c['encf'],
@@ -274,6 +266,68 @@ def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(v
         seguimiento_hasta=_a_zona_rd(c['seguimiento_hasta']),
         validacion=_validacion_ordenada(c['validacion_detalle'] or {}),
     )
+
+
+def _exigir_postgres():
+    if leer_config_db()[0] != 'postgres':
+        raise HTTPException(status_code=503, detail="Requiere DB_ENGINE=postgres")
+
+
+async def _leer_archivo(archivo: UploadFile | None, nombre: str) -> bytes | None:
+    if archivo is None:
+        return None
+    datos = await archivo.read(MAX_BYTES_ARCHIVO + 1)
+    if len(datos) > MAX_BYTES_ARCHIVO:
+        raise HTTPException(status_code=413, detail=f"El archivo '{nombre}' supera {MAX_BYTES_ARCHIVO} bytes")
+    return datos or None
+
+
+@app.post("/comprobantes", response_model=ComprobanteEstadoOut,
+          responses={413: {"description": "Archivo demasiado grande"},
+                     422: {"description": "El XML no es un e-CF legible (mal formado, o sin RNCEmisor o eNCF)"},
+                     503: {"description": "Requiere DB_ENGINE=postgres"}},
+          description="Registra un e-CF: valida el XML (estructura contra la XSD de la DGII, integridad de la firma, "
+                      "certificado del firmante, comprador) y consulta su estado en la DGII con una URL construida "
+                      "siempre desde el XML firmado. El PDF es opcional: si viene, los datos de su QR se cruzan con "
+                      "el XML (verificación `cruce`); sin PDF, `cruce` da NO_VERIFICABLE. El comprobante queda en "
+                      "seguimiento periódico; su último estado se consulta con GET /comprobantes/{rnc_emisor}/{encf}. "
+                      "Reenviar el mismo e-CF es idempotente.")
+async def registrar_comprobante_api(xml: UploadFile = File(..., description="e-CF firmado (XML)"),
+                                    pdf: UploadFile | None = File(None, description="Representación impresa (PDF con QR), opcional"),
+                                    x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    xml_bytes = await _leer_archivo(xml, 'xml')
+    if not xml_bytes:
+        raise HTTPException(status_code=422, detail="El archivo 'xml' está vacío")
+    pdf_bytes = await _leer_archivo(pdf, 'pdf')
+
+    def _registrar():
+        db = get_db()
+        try:
+            return registrar_comprobante(db, xml_bytes, pdf_bytes, origen='api')
+        finally:
+            _cerrar_db(db)
+    try:
+        c = await run_in_threadpool(_registrar)
+    except ErrorLecturaECF as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return _comprobante_out(c)
+
+
+@app.get("/comprobantes/{rnc_emisor}/{encf}", response_model=ComprobanteEstadoOut,
+         responses={404: {"description": "Comprobante no registrado: {\"registrado\": false}"},
+                    503: {"description": "Requiere DB_ENGINE=postgres"}},
+         description="Devuelve el último estado conocido de un e-CF registrado, con el resultado de cada verificación del XML. Fechas en zona horaria de RD (-04:00).")
+def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    db = get_db()
+    try:
+        c = db.get_comprobante(rnc_emisor, encf)
+    finally:
+        _cerrar_db(db)
+    if c is None:
+        return JSONResponse(status_code=404, content={"registrado": False})
+    return _comprobante_out(c)
 
 
 # def get_current_user(token: str = Depends(oauth2_scheme)):

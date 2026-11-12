@@ -47,6 +47,26 @@ curl -X POST "http://localhost:7000/validar-pdf" \
 }
 ```
 
+## Registro de un e-CF (XML y PDF)
+
+### POST `/comprobantes`
+
+`multipart/form-data` con el header `x-api-key`:
+
+- `xml` (obligatorio): el e-CF firmado. De él sale todo lo necesario para validar y para consultar la DGII
+  (RNC emisor y comprador, e-NCF, fecha, monto, fecha de firma y código de seguridad, que son los 6 primeros
+  caracteres del `SignatureValue`).
+- `pdf` (opcional): la representación impresa. Si viene, los datos de su QR se cruzan con el XML (verificación
+  `cruce`), lo que detecta un PDF que no corresponde a su XML. Sin PDF, `cruce` da `NO_VERIFICABLE`.
+
+Valida el XML, hace la primera consulta a la DGII y deja el comprobante en seguimiento. Responde lo mismo que el
+`GET` de abajo. Reenviar el mismo e-CF no lo duplica. Errores: `422` si el XML no es un e-CF legible, `413` si un
+archivo supera 10 MB.
+
+```bash
+curl -X POST "https://validador-fe.ysalabs.work/comprobantes"   -H "x-api-key: TU_API_KEY"   -F "xml=@101616202E310000002882.xml"   -F "pdf=@101616202E310000002882.pdf"
+```
+
 ## Consulta del estado de un e-CF
 
 ### GET `/comprobantes/{rnc_emisor}/{encf}`
