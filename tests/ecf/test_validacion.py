@@ -120,6 +120,9 @@ class _Requests:
     def Session(self):
         return self
 
+    def mount(self, prefijo, adaptador):
+        self.adaptadores = {**getattr(self, 'adaptadores', {}), prefijo: adaptador}
+
     def __enter__(self):
         return self
 
@@ -278,7 +281,8 @@ def test_http_comprueba_el_host_de_la_peticion_preparada(monkeypatch):
         http_descargar('http://interno.x/a')
     assert falso.llamadas == []
     assert http_descargar('http://publico.x/a') == b'ok'
-    assert falso.llamadas[0][1] == 'http://publico.x/a'
+    assert falso.llamadas[0][1] == f'http://{PUBLICA}/a'
+    assert falso.llamadas[0][2]['prepared'].headers['Host'] == 'publico.x'
 
 
 def test_http_ignora_proxies_del_entorno(monkeypatch):  # T7
@@ -292,3 +296,33 @@ def test_http_ignora_proxies_del_entorno(monkeypatch):  # T7
     monkeypatch.setattr(validacion, 'requests', falso)
     assert http_descargar('http://cps.viafirma.do/a.crt') == b'ok'
     assert falso.trust_env_al_enviar is False
+
+
+def test_http_conecta_a_la_ip_validada_aunque_el_dns_cambie(monkeypatch):
+    """DNS rebinding: la segunda resolución apunta a loopback, pero la conexión usa la IP ya validada."""
+    respuestas = iter([[PUBLICA], ['127.0.0.1'], ['127.0.0.1']])
+    monkeypatch.setattr(validacion, '_resolver', lambda h, p: next(respuestas))
+    falso = _Requests(b'ok')
+    monkeypatch.setattr(validacion, 'requests', falso)
+    assert http_ocsp_post('http://ocsp.rebind.x:8080/o?a=1', b'q') == b'ok'
+    metodo, url, kw = falso.llamadas[0]
+    assert url == f'http://{PUBLICA}:8080/o?a=1'
+    assert kw['prepared'].headers['Host'] == 'ocsp.rebind.x:8080'
+
+
+def test_https_fija_ip_con_sni_y_verificacion_del_nombre_original(monkeypatch):
+    falso = _Requests(b'ok')
+    monkeypatch.setattr(validacion, 'requests', falso)
+    assert http_descargar('https://cps.viafirma.do/x.crt') == b'ok'
+    assert falso.llamadas[0][1] == f'https://{PUBLICA}/x.crt'
+    adaptador = falso.adaptadores['https://']
+    kw = adaptador.poolmanager.connection_pool_kw
+    assert kw['server_hostname'] == 'cps.viafirma.do' and kw['assert_hostname'] == 'cps.viafirma.do'
+
+
+def test_http_ipv6_publica_entre_corchetes(monkeypatch):
+    monkeypatch.setattr(validacion, '_resolver', lambda h, p: ['2606:2800:220:1::248'])
+    falso = _Requests(b'ok')
+    monkeypatch.setattr(validacion, 'requests', falso)
+    assert http_descargar('http://v6.x/a') == b'ok'
+    assert falso.llamadas[0][1] == 'http://[2606:2800:220:1::248]/a'

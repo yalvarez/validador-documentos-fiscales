@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 import requests
+from requests.adapters import HTTPAdapter
 from urllib3.util import parse_url
 
 import common.ecf as _paquete
@@ -50,10 +51,12 @@ def _ip_permitida(texto: str) -> bool:
                                  or ip.is_private or ip.is_reserved or ip.is_unspecified)
 
 
-def _validar_url(url: str) -> str:
+def _validar_url(url: str) -> tuple[str, str]:
     """Solo http/https hacia destinos públicos: las URL vienen de certificados del XML recibido.
 
-    Devuelve el host comprobado. Se comprueba el host de la URL tal como la entenderá urllib3.
+    Devuelve (host comprobado, IP a la que conectar). Se comprueba el host de la URL tal como la entenderá
+    urllib3, y todas sus IP deben ser públicas; la conexión se fija a la primera, así una segunda resolución
+    (DNS rebinding) no puede llevarla a otro destino.
     """
     if not isinstance(url, str) or not url.lower().startswith(('http://', 'https://')):
         raise ValueError(f'Solo se permiten URL http/https: {url!r}')
@@ -70,8 +73,8 @@ def _validar_url(url: str) -> str:
         raise ValueError(f'URL sin host: {url!r}')
     puerto = partes.port or (443 if (partes.scheme or '').lower() == 'https' else 80)
     try:
-        ipaddress.ip_address(host)
-        direcciones = [host]
+        ipaddress.ip_address(host.strip('[]'))
+        direcciones = [host.strip('[]')]
     except ValueError:
         try:
             direcciones = list(_resolver(host, puerto))
@@ -79,17 +82,37 @@ def _validar_url(url: str) -> str:
             raise ValueError(f'No se pudo resolver {host}: {e}') from e
     if not direcciones or not all(_ip_permitida(d) for d in direcciones):
         raise ValueError(f'Destino no permitido: {host}')
-    return host
+    return host, direcciones[0].split('%')[0]
 
 
-def _enviar(metodo: str, url: str, maximo: int, **kw) -> bytes:
-    """Prepara la petición, comprueba el destino de la URL ya preparada y envía ese mismo objeto."""
-    _validar_url(url)
+class _AdaptadorFijado(HTTPAdapter):
+    """Conecta a la IP de la URL pero hace el SNI y verifica el certificado TLS contra el nombre original."""
+
+    def __init__(self, nombre: str):
+        self._nombre = nombre
+        super().__init__(max_retries=0)
+
+    def init_poolmanager(self, *a, **kw):
+        kw['server_hostname'] = self._nombre
+        kw['assert_hostname'] = self._nombre
+        super().init_poolmanager(*a, **kw)
+
+
+def _enviar(metodo: str, url: str, maximo: int, headers: dict | None = None, **kw) -> bytes:
+    """Resuelve y comprueba el destino una sola vez y conecta a esa IP, con el Host original."""
+    host, ip = _validar_url(url)
     inicio = _reloj()
-    preparada = requests.Request(metodo, url, **kw).prepare()
-    _validar_url(preparada.url)
+    partes = parse_url(url)
+    url_fijada = partes._replace(host=f'[{ip}]' if ':' in ip else ip).url
+    cabeceras = {**(headers or {}), 'Host': host if partes.port is None else f'{host}:{partes.port}'}
+    preparada = requests.Request(metodo, url_fijada, headers=cabeceras, **kw).prepare()
+    if _validar_url(preparada.url)[1] != ip:
+        raise ValueError(f'Destino no permitido: {host}')
     with requests.Session() as sesion:
         sesion.trust_env = False  # un proxy del entorno no puede saltarse la comprobación de IP
+        adaptador = _AdaptadorFijado(host)
+        sesion.mount('http://', adaptador)
+        sesion.mount('https://', adaptador)
         resp = sesion.send(preparada, allow_redirects=False, timeout=TIMEOUT_HTTP, stream=True)
         return _leer_acotado(resp, maximo, inicio)
 
