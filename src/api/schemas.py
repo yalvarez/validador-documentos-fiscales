@@ -81,3 +81,47 @@ class ComprobanteEstadoOut(BaseModel):
     seguimiento_activo: bool
     seguimiento_hasta: Optional[datetime] = None
     validacion: dict[str, VerificacionOut]
+
+
+class ComprobanteResumenOut(BaseModel):
+    rnc_emisor: str
+    encf: str
+    rnc_comprador: Optional[str] = None
+    tipo_ecf: Optional[str] = None
+    fecha_emision: Optional[str] = None
+    monto_total: Optional[str] = None
+    razon_social_emisor: Optional[str] = None
+    origen: str
+    estado: str
+    estado_dgii_texto: Optional[str] = None
+    ultima_consulta_dgii: Optional[datetime] = None
+    seguimiento_activo: bool
+    seguimiento_hasta: Optional[datetime] = None
+    creado_en: Optional[datetime] = None
+    verificaciones: dict[str, str]
+
+
+class ListaComprobantesOut(BaseModel):
+    total: int
+    items: list[ComprobanteResumenOut]
+
+
+class EventoHistorialOut(BaseModel):
+    fecha: datetime
+    tipo: str
+    estado_anterior: Optional[str] = None
+    estado_nuevo: Optional[str] = None
+    estado_dgii_texto: Optional[str] = None
+    detalle: Optional[str] = None
+
+
+class ParametroConsolaOut(BaseModel):
+    clave: str
+    valor: Optional[str] = None
+    por_defecto: str
+    descripcion: str
+    ultima_actualizacion: Optional[datetime] = None
+
+
+class ParametroValorIn(BaseModel):
+    valor: str

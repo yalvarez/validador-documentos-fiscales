@@ -174,6 +174,14 @@ class PostgresDBWrapper(BaseDBWrapper):
             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, descripcion = EXCLUDED.descripcion, ultima_actualizacion = CURRENT_TIMESTAMP
         ''', (clave, valor, descripcion))
 
+    def delete_param(self, clave):
+        self.conn.execute('DELETE FROM parametros WHERE clave = %s', (clave,))
+
+    def get_params_con_fecha(self, claves):
+        return {f['clave']: f for f in self._filas(
+            'SELECT clave, valor, descripcion, ultima_actualizacion FROM parametros WHERE clave = ANY(%s)',
+            (list(claves),))}
+
     def get_all_params(self):
         cur = self.conn.execute('SELECT clave, valor, descripcion, ultima_actualizacion FROM parametros')
         return cur.fetchall()
@@ -287,6 +295,31 @@ class PostgresDBWrapper(BaseDBWrapper):
     def get_historial(self, id):
         return self._filas(
             'SELECT * FROM comprobante_historial WHERE comprobante_id = %s ORDER BY fecha, id', (id,))
+
+    def listar_comprobantes(self, estado=None, texto=None, con_fallo=False, limite=50, desplazamiento=0):
+        """(filas resumidas sin el XML, total) ordenadas de la más reciente a la más antigua."""
+        condiciones, params = [], []
+        if estado:
+            condiciones.append('estado = %s')
+            params.append(estado)
+        if texto:
+            literal = texto.strip()
+            for c in ('\\', '%', '_'):  # comodines de LIKE como texto literal (escape por defecto: \)
+                literal = literal.replace(c, '\\' + c)
+            patron = f'%{literal}%'
+            condiciones.append('(encf ILIKE %s OR rnc_emisor ILIKE %s OR razon_social_emisor ILIKE %s)')
+            params += [patron, patron, patron]
+        if con_fallo:
+            condiciones.append("EXISTS (SELECT 1 FROM jsonb_each(validacion_detalle) v "
+                               "WHERE v.value->>'resultado' = 'FALLO')")
+        donde = ('WHERE ' + ' AND '.join(condiciones)) if condiciones else ''
+        total = self._filas(f'SELECT count(*) AS n FROM comprobantes {donde}', params)[0]['n']
+        filas = self._filas(
+            'SELECT id, rnc_emisor, encf, rnc_comprador, tipo_ecf, fecha_emision, monto_total, '
+            'razon_social_emisor, origen, estado, estado_dgii_texto, ultima_consulta_dgii, seguimiento_activo, '
+            f'seguimiento_hasta, validacion_detalle, creado_en FROM comprobantes {donde} '
+            'ORDER BY creado_en DESC, id DESC LIMIT %s OFFSET %s', params + [limite, desplazamiento])
+        return filas, total
 
     def get_comprobantes_por_consultar(self, ahora, limite=100):
         _exigir_aware('ahora', ahora)

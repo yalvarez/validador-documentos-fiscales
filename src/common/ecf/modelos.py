@@ -22,7 +22,7 @@ CONSULTA = 'CONSULTA'
 CAMBIO_ESTADO = 'CAMBIO_ESTADO'
 ERROR_CONSULTA = 'ERROR_CONSULTA'
 DOCUMENTO_REEMPLAZADO = 'DOCUMENTO_REEMPLAZADO'
-DOCUMENTO_RECHAZADO = 'DOCUMENTO_RECHAZADO'  # solo historial interno, fuera del contrato de la API
+DOCUMENTO_RECHAZADO = 'DOCUMENTO_RECHAZADO'  # XML distinto descartado; visible en GET .../historial
 
 
 # Orden canónico de las 7 verificaciones del XML

@@ -1,88 +1,77 @@
-import { useEffect, useState } from 'react';
-import axios from 'axios';
-import { Container, Typography, Table, TableBody, TableCell, TableHead, TableRow, Button, TextField, Paper } from '@mui/material';
-
-interface Parametro {
-  clave: string;
-  valor: string;
-  descripcion?: string;
-  ultima_actualizacion?: string;
-}
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Alert, Button, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField,
+  Typography,
+} from '@mui/material';
+import { api, fecha, mensajeError, type Parametro } from '../api';
 
 export default function Parametros() {
-  const [parametros, setParametros] = useState<Parametro[]>([]);
-  const [edit, setEdit] = useState<{ [clave: string]: string }>({});
-  const [loading, setLoading] = useState(false);
+  const [params, setParams] = useState<Parametro[]>([]);
+  const [edicion, setEdicion] = useState<Record<string, string>>({});
+  const [error, setError] = useState('');
+  const [aviso, setAviso] = useState('');
 
-  useEffect(() => {
-    const fetchParametros = async () => {
-      setLoading(true);
-      const res = await axios.get('/parametros/', {
-        baseURL: window.VITE_API_URL,
-      });
-      setParametros(res.data);
-      setLoading(false);
-    };
-    fetchParametros();
-  }, []);
+  const cargar = useCallback(() => api.get<Parametro[]>('/parametros').then((r) => {
+    setParams(r.data);
+    setEdicion(Object.fromEntries(r.data.map((p) => [p.clave, p.valor ?? ''])));
+  }).catch((e) => setError(mensajeError(e))), []);
 
-  const handleEdit = (clave: string, valor: string) => {
-    setEdit((prev) => ({ ...prev, [clave]: valor }));
-  };
+  useEffect(() => { cargar(); }, [cargar]);
 
-  const handleSave = async (clave: string) => {
-    const param = parametros.find(p => p.clave === clave);
-    const descripcion = param?.descripcion;
-    const res = await axios.post(`/parametros/${clave}`, { valor: edit[clave], descripcion }, {
-      baseURL: window.VITE_API_URL,
-    });
-    setEdit((prev) => {
-      const newEdit = { ...prev };
-      delete newEdit[clave];
-      return newEdit;
-    });
-    // Actualizar solo el parámetro editado en el estado
-    setParametros((prev) => prev.map(p => p.clave === clave ? res.data : p));
+  const guardar = async (clave: string) => {
+    setError(''); setAviso('');
+    try {
+      await api.put(`/parametros/${clave}`, { valor: edicion[clave] ?? '' });
+      setAviso(`${clave} guardado`);
+      cargar();
+    } catch (e) {
+      setError(mensajeError(e));
+    }
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4 }}>
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h5" gutterBottom>Parámetros de Configuración</Typography>
-        <div style={{ overflowX: 'auto' }}>
-          <Table>
+    <Container maxWidth="lg" sx={{ mt: 3, mb: 4 }}>
+      <Typography variant="h5" gutterBottom>Parámetros</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Vacío = valor por defecto. Los cambios aplican a los próximos registros y ciclos del seguimiento.
+      </Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {aviso && <Alert severity="success" sx={{ mb: 2 }}>{aviso}</Alert>}
+      <Paper variant="outlined">
+        <TableContainer>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Clave</TableCell>
+                <TableCell>Parámetro</TableCell>
                 <TableCell>Valor</TableCell>
-                <TableCell>Descripción</TableCell>
-                <TableCell>Última actualización</TableCell>
-                <TableCell>Acción</TableCell>
+                <TableCell>Por defecto</TableCell>
+                <TableCell>Actualizado</TableCell>
+                <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
-              {parametros.map((p) => (
+              {params.map((p) => (
                 <TableRow key={p.clave}>
-                  <TableCell>{p.clave}</TableCell>
                   <TableCell>
-                    <TextField
-                      value={edit[p.clave] ?? p.valor}
-                      onChange={e => handleEdit(p.clave, e.target.value)}
-                      size="small"
-                    />
+                    <div><code>{p.clave}</code></div>
+                    <Typography variant="caption" color="text.secondary">{p.descripcion}</Typography>
                   </TableCell>
-                  <TableCell>{p.descripcion}</TableCell>
-                  <TableCell>{p.ultima_actualizacion}</TableCell>
                   <TableCell>
-                    <Button variant="contained" size="small" onClick={() => handleSave(p.clave)} disabled={loading}>
-                      Guardar
-                    </Button>
+                    <TextField size="small" value={edicion[p.clave] ?? ''} placeholder={p.por_defecto}
+                      onChange={(e) => setEdicion({ ...edicion, [p.clave]: e.target.value })} />
+                  </TableCell>
+                  <TableCell>{p.por_defecto}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{fecha(p.ultima_actualizacion)}</TableCell>
+                  <TableCell>
+                    <Button size="small" variant="contained"
+                      disabled={(edicion[p.clave] ?? '').trim() === (p.valor ?? '')}
+                      onClick={() => guardar(p.clave)}>Guardar</Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </div>
+        </TableContainer>
       </Paper>
     </Container>
   );

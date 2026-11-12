@@ -17,3 +17,6 @@ Thumbs.db
 
 # Entorno virtual
 .venv/
+
+# Capturas de Playwright
+.playwright-mcp/

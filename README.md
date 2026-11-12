@@ -189,12 +189,34 @@ Las instrucciones completas, incluido el manejo de esquemas importados, están e
 ## Despliegue en producción (illuminatis-vps)
 
 El VPS corre el repo en `/root/apps/validador-documentos-fiscales` con un `.env` local (no versionado) que define
-`POSTGRES_PASSWORD` y `API_KEYS`. El override `docker-compose.prod.yml` deja el backend solo en `127.0.0.1:7000`
-y lo une a la red `lab-router_default`, desde donde Traefik lo publica por HTTPS (`http://validador-backend:8000`).
+`POSTGRES_PASSWORD`, `API_KEYS` y `CONSOLA_API_KEY` (que también figura en `API_KEYS`). El override
+`docker-compose.prod.yml` deja el backend y la consola solo en loopback y los une a la red `lab-router_default`,
+desde donde Traefik los publica por HTTPS: la API en la raíz (`http://validador-backend:8000`) y la consola en
+`/client` (`http://validador-frontend:80`), esta con usuario y contraseña (middleware `basicAuth`).
 
 ```bash
-ssh root@illuminatis-vps 'cd /root/apps/validador-documentos-fiscales && git pull --ff-only origin main   && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build'
+ssh root@illuminatis-vps 'cd /root/apps/validador-documentos-fiscales && git pull --ff-only origin main \
+  && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build'
 ```
+
+## Consola web (`/client`)
+
+Pantallas: lista de comprobantes con filtros y semáforo de verificaciones, detalle con historial, registro manual
+de XML/PDF y parámetros. Está en `src/client` (Vite + React + MUI). La sirve un nginx que reenvía `/client/api/*`
+a la API agregando `CONSOLA_API_KEY`, así la key nunca llega al navegador; por eso la consola debe estar siempre
+detrás de autenticación (en producción, `basicAuth` de Traefik).
+
+- Local con Docker: `CONSOLA_API_KEY=<una de API_KEYS> docker compose up -d --build` y abrir `http://localhost:5173/client/`.
+- Desarrollo: `cd src/client && API_KEY=<key> npm run dev` (el proxy de Vite apunta a `http://localhost:7000`).
+
+Endpoints que usa, además de los de arriba (todos con `x-api-key`):
+
+| Endpoint | Descripción |
+|---|---|
+| `GET /comprobantes?estado=&q=&con_fallo=&limite=&desde=` | Lista paginada, más recientes primero. `q` busca en e-NCF, RNC emisor y razón social. |
+| `GET /comprobantes/{rnc_emisor}/{encf}/historial` | Línea de tiempo: registro, consultas, cambios de estado y XML rechazados. |
+| `GET /parametros` | Parámetros editables con su valor por defecto. |
+| `PUT /parametros/{clave}` | Cambia uno (`{"valor": "..."}`); vacío vuelve al defecto. Solo `RNC_TERPEL` y `SEGUIMIENTO_*`. |
 
 ## Ejemplos de consumo
 

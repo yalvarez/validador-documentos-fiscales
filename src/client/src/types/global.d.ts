@@ -1,6 +1,0 @@
-declare global {
-  interface Window {
-    VITE_API_URL?: string;
-  }
-}
-export {};

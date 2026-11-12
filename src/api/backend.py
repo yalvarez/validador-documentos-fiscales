@@ -7,6 +7,10 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2Authorizatio
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from api.schemas import ComprobanteEstadoOut, VerificacionOut
+from api.schemas import (ComprobanteResumenOut, EventoHistorialOut, ListaComprobantesOut,
+                         ParametroConsolaOut, ParametroValorIn)
+from fastapi import Query
+from common.ecf.seguimiento import ConfigSeguimiento
 from api.schemas import ParametroOut, ParametroIn, FacturaOut, MensajeOut
 from api.parametros_manager import ParametrosManager
 from db.db_factory import get_db_wrapper
@@ -333,6 +337,130 @@ def consultar_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(v
     if c is None:
         return JSONResponse(status_code=404, content={"registrado": False})
     return _comprobante_out(c)
+
+
+@app.get("/comprobantes", response_model=ListaComprobantesOut,
+         responses={503: {"description": "Requiere DB_ENGINE=postgres"}},
+         description="Lista los e-CF registrados, del más reciente al más antiguo, con el resultado de cada "
+                     "verificación. Filtros: `estado`, `q` (busca en e-NCF, RNC emisor y razón social) y "
+                     "`con_fallo` (alguna verificación en FALLO).")
+def listar_comprobantes(estado: str | None = None, q: str | None = None, con_fallo: bool = False,
+                        limite: int = Query(50, ge=1, le=200), desde: int = Query(0, ge=0),
+                        x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    db = get_db()
+    try:
+        filas, total = db.listar_comprobantes(estado=(estado or '').strip().upper() or None,
+                                              texto=(q or '').strip() or None, con_fallo=con_fallo,
+                                              limite=limite, desplazamiento=desde)
+    finally:
+        _cerrar_db(db)
+    items = []
+    for f in filas:
+        detalle = _validacion_ordenada(f['validacion_detalle'] or {})
+        items.append(ComprobanteResumenOut(
+            **{k: f[k] for k in ('rnc_emisor', 'encf', 'rnc_comprador', 'tipo_ecf', 'fecha_emision',
+                                 'razon_social_emisor', 'origen', 'estado', 'estado_dgii_texto',
+                                 'seguimiento_activo')},
+            monto_total=None if f['monto_total'] is None else f"{f['monto_total']:.2f}",
+            ultima_consulta_dgii=_a_zona_rd(f['ultima_consulta_dgii']),
+            seguimiento_hasta=_a_zona_rd(f['seguimiento_hasta']),
+            creado_en=_a_zona_rd(f['creado_en']),
+            verificaciones={k: v.resultado for k, v in detalle.items()}))
+    return ListaComprobantesOut(total=total, items=items)
+
+
+@app.get("/comprobantes/{rnc_emisor}/{encf}/historial", response_model=list[EventoHistorialOut],
+         responses={404: {"description": "Comprobante no registrado: {\"registrado\": false}"},
+                    503: {"description": "Requiere DB_ENGINE=postgres"}},
+         description="Línea de tiempo de un e-CF: registro, consultas a la DGII, cambios de estado y XML rechazados.")
+def historial_comprobante(rnc_emisor: str, encf: str, x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    db = get_db()
+    try:
+        c = db.get_comprobante(rnc_emisor, encf)
+        eventos = db.get_historial(c['id']) if c else None
+    finally:
+        _cerrar_db(db)
+    if c is None:
+        return JSONResponse(status_code=404, content={"registrado": False})
+    campos = ('tipo', 'estado_anterior', 'estado_nuevo', 'estado_dgii_texto', 'detalle')
+    return [EventoHistorialOut(**{k: e[k] for k in campos}, fecha=_a_zona_rd(e['fecha'])) for e in eventos]
+
+
+def _entero_positivo(v: str):
+    if not v.isdigit() or int(v) <= 0:
+        raise ValueError('debe ser un entero mayor que 0')
+
+
+def _factor(v: str):
+    try:
+        f = float(v)
+    except ValueError:
+        raise ValueError('debe ser un número mayor o igual a 1')
+    if not (1 <= f < float('inf')):
+        raise ValueError('debe ser un número mayor o igual a 1')
+
+
+def _rnc(v: str):
+    if not (v.isdigit() and len(v) in (9, 11)):
+        raise ValueError('debe tener 9 dígitos (RNC) u 11 (cédula)')
+
+
+_DEF = ConfigSeguimiento()
+# clave -> (valor por defecto, descripción, validador). Solo estas se pueden editar por la API.
+PARAMETROS_EDITABLES = {
+    'RNC_TERPEL': ('(vacío)', 'RNC esperado del comprador. Vacío: la verificación «comprador» da NO_VERIFICABLE.', _rnc),
+    'SEGUIMIENTO_INTERVALO_INICIAL_MIN': (str(_DEF.intervalo_inicial_min), 'Minutos hasta la segunda consulta a la DGII.', _entero_positivo),
+    'SEGUIMIENTO_FACTOR': (str(_DEF.factor), 'Factor por el que crece el intervalo entre consultas.', _factor),
+    'SEGUIMIENTO_INTERVALO_MAX_MIN': (str(_DEF.intervalo_max_min), 'Intervalo máximo entre consultas, en minutos.', _entero_positivo),
+    'SEGUIMIENTO_DURACION_MAX_HORAS': (str(_DEF.duracion_max_horas), 'Horas durante las que se sigue un comprobante.', _entero_positivo),
+    'SEGUIMIENTO_CICLO_SEG': (str(_DEF.ciclo_seg), 'Cada cuántos segundos el worker busca comprobantes por consultar.', _entero_positivo),
+}
+
+
+def _parametro_out(clave, fila) -> ParametroConsolaOut:
+    defecto, descripcion, _ = PARAMETROS_EDITABLES[clave]
+    return ParametroConsolaOut(clave=clave, valor=fila['valor'] if fila else None, por_defecto=defecto,
+                               descripcion=descripcion,
+                               ultima_actualizacion=_a_zona_rd(fila['ultima_actualizacion']) if fila else None)
+
+
+@app.get("/parametros", response_model=list[ParametroConsolaOut],
+         description="Parámetros editables del núcleo de validación y seguimiento, con su valor por defecto.")
+def listar_parametros_consola(x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    db = get_db()
+    try:
+        filas = db.get_params_con_fecha(PARAMETROS_EDITABLES)
+    finally:
+        _cerrar_db(db)
+    return [_parametro_out(c, filas.get(c)) for c in PARAMETROS_EDITABLES]
+
+
+@app.put("/parametros/{clave}", response_model=ParametroConsolaOut,
+         responses={404: {"description": "Parámetro no editable"}, 422: {"description": "Valor inválido"}},
+         description="Cambia un parámetro editable. Un valor vacío lo borra y vuelve al valor por defecto.")
+def actualizar_parametro_consola(clave: str, body: ParametroValorIn, x_api_key: str = Depends(verify_api_key)):
+    _exigir_postgres()
+    if clave not in PARAMETROS_EDITABLES:
+        raise HTTPException(status_code=404, detail="Parámetro no editable")
+    valor = body.valor.strip()
+    if valor:
+        try:
+            PARAMETROS_EDITABLES[clave][2](valor)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"{clave}: {e}")
+    db = get_db()
+    try:
+        if valor:
+            db.set_param(clave, valor, PARAMETROS_EDITABLES[clave][1])
+        else:
+            db.delete_param(clave)
+        fila = db.get_params_con_fecha([clave]).get(clave)
+    finally:
+        _cerrar_db(db)
+    return _parametro_out(clave, fila)
 
 
 # def get_current_user(token: str = Depends(oauth2_scheme)):

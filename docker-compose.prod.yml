@@ -11,6 +11,14 @@ services:
       - default
       - lab-router
 
+  # Traefik la publica en https://<dominio>/client con usuario y contrasena (basicAuth).
+  frontend:
+    ports: !override
+      - "127.0.0.1:5173:80"
+    networks:
+      - default
+      - lab-router
+
 networks:
   lab-router:
     name: lab-router_default
