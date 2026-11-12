@@ -16,7 +16,7 @@ from api.schemas import ValidacionFacturaOut, ValidarFacturaIn, ConsultaFacturaP
 import base64
 from common.ecf.modelos import VERIFICACIONES, ZONA_RD
 
-API_KEYS = [k.strip() for k in os.getenv('API_KEYS', 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
+API_KEYS = [k.strip() for k in (os.getenv('API_KEYS') or 'YomxbA2xGssmMF2xPmyrgsdxEHROstMP').split(',') if k.strip()]
 
 app = FastAPI(title="Validador de Facturas DGII", version="1.0")
     

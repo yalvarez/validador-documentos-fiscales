@@ -1,0 +1,17 @@
+# Override de produccion (illuminatis-vps):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# El backend no publica puertos en 0.0.0.0: Traefik (lab-router) lo alcanza por la
+# red lab-router_default como http://validador-backend:8000. Para pruebas locales en
+# el VPS queda 127.0.0.1:7000.
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:7000:8000"
+    networks:
+      - default
+      - lab-router
+
+networks:
+  lab-router:
+    name: lab-router_default
+    external: true

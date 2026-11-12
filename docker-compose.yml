@@ -26,6 +26,7 @@ services:
     environment:
       - DB_ENGINE=postgres
       - DB_CONNECTION_STRING=postgresql://validador:${POSTGRES_PASSWORD}@postgres:5432/validador
+      - API_KEYS=${API_KEYS:-}
     depends_on:
       postgres:
         condition: service_healthy

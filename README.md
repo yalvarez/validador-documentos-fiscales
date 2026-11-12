@@ -164,6 +164,16 @@ no compila. Para actualizarlas, descargarlas con un navegador desde el sitio de 
 sin la XSD de un tipo, la verificación `estructura` de ese tipo da `NO_VERIFICABLE`.
 Las instrucciones completas, incluido el manejo de esquemas importados, están en `src/common/ecf/xsd/FUENTE.md`.
 
+## Despliegue en producción (illuminatis-vps)
+
+El VPS corre el repo en `/root/apps/validador-documentos-fiscales` con un `.env` local (no versionado) que define
+`POSTGRES_PASSWORD` y `API_KEYS`. El override `docker-compose.prod.yml` deja el backend solo en `127.0.0.1:7000`
+y lo une a la red `lab-router_default`, desde donde Traefik lo publica por HTTPS (`http://validador-backend:8000`).
+
+```bash
+ssh root@illuminatis-vps 'cd /root/apps/validador-documentos-fiscales && git pull --ff-only origin main   && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build'
+```
+
 ## Ejemplos de consumo
 
 ### Python (requests)
